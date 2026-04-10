@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>Streaming Mode - Audiobook Server</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <style>
+        /* Stream-specific styles - rest comes from styles.css .player class */
+        
+        .text-segment {
+            display: inline;
+            padding: 2px 4px;
+            margin: 0 2px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        /* Hover effect only on devices with mouse/pointer */
+        @media (hover: hover) and (pointer: fine) {
+            .text-segment:hover {
+                background-color: var(--bg-tertiary);
+            }
+        }
+        
+        /* Active state for touch feedback on mobile */
+        .text-segment:active {
+            background-color: var(--bg-tertiary);
+        }
+        
+        /* Remove any focus outline */
+        .text-segment:focus {
+            outline: none;
+        }
+        
+        .text-segment.playing {
+            background-color: var(--primary-color);
+            color: white;
+            padding: 2px 4px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        
+        .text-segment.played {
+            opacity: 0.6;
+        }
+        
+        .chunk-container {
+            margin-bottom: 8px;
+            padding: 12px;
+            border-radius: 5px;
+            line-height: 1.8;
+            position: relative;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            touch-action: manipulation;
+            transition: all 0.2s ease;
+        }
+        
+        /* Hover effect only on devices with mouse/pointer */
+        @media (hover: hover) and (pointer: fine) {
+            .chunk-container:hover {
+                background-color: rgba(255, 255, 255, 0.02);
+            }
+        }
+        
+        /* Active state for touch feedback - shows while pressing */
+        .chunk-container:active {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+        
+        /* Remove any focus outline that might persist on mobile */
+        .chunk-container:focus {
+            outline: none;
+        }
+        
+        .chunk-container.current {
+            background-color: var(--primary-color-light);
+            border-left: 3px solid var(--primary-color);
+            padding-left: 12px;
+            font-weight: 500;
+        }
+        
+        .chunk-container.played {
+            opacity: 0.6;
+        }
+        
+        .chunk-container.bookmarked {
+            border-right: 4px solid gold;
+            padding-right: 12px;
+        }
+        
+        .chunk-container.bookmarked::before {
+            content: "⭐";
+            position: absolute;
+            right: 8px;
+            top: 8px;
+            font-size: 16px;
+            z-index: 1;
+        }
+        
+        /* Image styles */
+        .inline-image-wrapper {
+            display: block;
+            margin: 15px 0;
+            text-align: center;
+        }
+        
+        .chunk-image {
+            max-width: 100%;
+            width: 100%;
+            height: auto;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .chunk-image:hover {
+            transform: scale(1.05);
+        }
+        
+        .image-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10001;
+            cursor: zoom-out;
+        }
+        
+        .image-modal img {
+            max-width: 95%;
+            max-height: 95%;
+            object-fit: contain;
+        }
+        
+        /* Modal and chapter styles */
+        .chapter-list {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 60vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .chapter-list::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .chapter-list::-webkit-scrollbar-track {
+            background: var(--bg-primary);
+            border-radius: 4px;
+        }
+        
+        .chapter-list::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+        
+        .chapter-list::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
+        }
+        
+        .chapter-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+        }
+        
+        .chapter-item:hover {
+            background: var(--bg-tertiary);
+        }
+        
+        .chapter-item:active {
+            background: var(--primary-color-light);
+            transform: scale(0.98);
+        }
+        
+        .chapter-item.active {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+        
+        .chapter-name {
+            font-weight: bold;
+            margin-bottom: 4px;
+            font-size: 14px;
+        }
+        
+        .chapter-info {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+        
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            backdrop-filter: blur(2px);
+        }
+        
+        .loading-spinner {
+            background: var(--bg-secondary);
+            padding: 25px;
+            border-radius: 10px;
+            text-align: center;
+            max-width: 80%;
+        }
+        
+        .spinner {
+            border: 4px solid var(--border-color);
+            border-top: 4px solid var(--primary-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        /* Non-blocking audio generation indicator */
+        .audio-status {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 25px;
+            z-index: 9000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        
+        .audio-status.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        
+        .audio-status .mini-spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        .audio-status .skip-btn {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 8px;
+        }
+        
+        .audio-status .skip-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .hidden {
+            display: none;
+        }
+        
+        .modal {
+            touch-action: none;
+        }
+        
+        .modal-content {
+            max-width: 95%;
+            max-height: 90vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        /* Mobile-specific improvements */
+        @media (max-width: 768px) {
+            .stream-container {
+                padding: 5px;
+            }
+            
+            .stream-title {
+                font-size: 16px;
+            }
+            
+            .controls-panel {
+                padding: 8px;
+            }
+            
+            .play-button {
+                width: 45px !important;
+                height: 45px !important;
+                min-width: 45px !important;
+                font-size: 18px !important;
+            }
+            
+            .progress-bar {
+                height: 10px;
+            }
+            
+            .progress-bar::-webkit-slider-thumb {
+                width: 24px;
+                height: 24px;
+            }
+            
+            .progress-bar::-moz-range-thumb {
+                width: 24px;
+                height: 24px;
+            }
+            
+            .progress-info {
+                font-size: 10px;
+            }
+            
+            .progress-info span {
+                font-size: 10px;
+            }
+            
+            .btn {
+                padding: 6px 10px !important;
+                font-size: 12px !important;
+            }
+            
+            .btn-small {
+                padding: 6px 10px !important;
+                font-size: 12px !important;
+            }
+            
+            .speed-control {
+                font-size: 11px;
+            }
+            
+            .speed-control select {
+                font-size: 11px;
+                padding: 4px 6px;
+            }
+            
+            .chunk-container.bookmarked::before {
+                font-size: 14px;
+                right: 6px;
+                top: 6px;
+            }
+            
+            .modal-content {
+                max-width: 98%;
+                margin: 10px;
+            }
+            
+            .chapter-item {
+                padding: 10px;
+            }
+            
+            .chapter-name {
+                font-size: 13px;
+            }
+            
+            .chapter-info {
+                font-size: 11px;
+            }
+        }
+        
+        /* Prevent zoom on double-tap */
+        * {
+            touch-action: manipulation;
+        }
+        
+        input, select, textarea {
+            touch-action: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="stream-container player" style="padding-top: 8px; padding-bottom: 8px;">
+        <!-- Header Section -->
+        <div class="player-header" id="playerHeader">
+            <h3 id="bookTitle" style="margin: 0; font-size: 16px;">Loading...</h3>
+        </div>
+        
+        <!-- Buttons Section -->
+        <div style="display: flex; gap: 5px; padding: 2px 10px 8px 5px; flex-wrap: nowrap; background-color: var(--bg-secondary); align-items: center; overflow-x: auto;">
+            <button onclick="showChapters()" class="btn" style="white-space: nowrap; flex-shrink: 0; padding: 8px 12px;">
+                📖 Chapters
+            </button>
+            <button onclick="showBookmarks()" class="btn" style="white-space: nowrap; flex-shrink: 0; padding: 8px 12px;">
+                ★ Bookmarks
+            </button>
+            <button onclick="showSettings()" class="btn" id="settingsBtn" style="white-space: nowrap; flex-shrink: 0; padding: 8px 12px;">
+                |  ⚙️  |
+            </button>
+            <button onclick="goBack()" class="btn-close" style="margin-left: auto; flex-shrink: 0;">✕</button>
+        </div>
+        
+        <div class="lrc-display" id="textDisplay" style="padding-top: 2px;">
+            <div style="text-align: center; color: var(--text-secondary); padding: 50px;">
+                Loading book...
+            </div>
+        </div>
+        
+        <!-- Progress Bar Container (separate from audio controls) -->
+        <div id="progressBarContainer" style="padding: 5px 10px; background-color: var(--bg-secondary);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                <span id="currentPosition" style="font-size: 11px; color: var(--text-secondary);">Chunk 0 / 0</span>
+                <span id="timeEstimate" style="font-size: 11px; color: var(--text-secondary);">~0:00 / ~0:00</span>
+                <span id="totalProgress" style="font-size: 11px; color: var(--text-secondary);">0%</span>
+            </div>
+            <input type="range" 
+                   class="progress-bar" 
+                   id="progressBar" 
+                   min="0" 
+                   max="100" 
+                   value="0"
+                   style="width: 100%; cursor: pointer;"
+                   oninput="seekToPosition(this.value)"
+                   onmousedown="this.dataset.seeking='true'"
+                   onmouseup="this.dataset.seeking='false'"
+                   ontouchstart="this.dataset.seeking='true'"
+                   ontouchend="this.dataset.seeking='false'">
+        </div>
+        
+        <!-- Audio Controls -->
+        <div class="player-controls" id="playerControls">
+            <div style="display: flex; align-items: center; gap: 10px; padding: 5px 10px; background-color: var(--bg-secondary); border-radius: 5px;">
+                <button id="playButton" onclick="togglePlay()" class="btn" disabled style="min-width: 50px; padding: 10px 15px; font-size: 20px; background: transparent; border: none; flex-shrink: 0;">
+                    ▶
+                </button>
+                <button onclick="scrollToCurrentChunk()" class="btn btn-small" id="jumpToCurrentBtn" style="white-space: nowrap; flex-shrink: 0;">
+                    ⬇ Jump to Current
+                </button>
+                <div style="flex: 1;"></div>
+                <div style="display: flex; align-items: center; gap: 5px; flex-shrink: 0;">
+                    <label style="font-size: 13px;">Speed:</label>
+                    <select id="speedControl" onchange="changeSpeed()" style="padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); font-size: 13px; cursor: pointer;">
+                        <option value="0.5">0.5x</option>
+                        <option value="0.75">0.75x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="1.25">1.25x</option>
+                        <option value="1.5">1.5x</option>
+                        <option value="2">2x</option>
+                    </select>
+                </div>
+            </div>
+            
+            <!-- Hidden audio player -->
+            <audio id="audioPlayer" style="display: none;"></audio>
+        </div>
+        
+        <div class="player-bottom-actions" id="bottomActionsContainer" style="display: none; gap: 10px; padding: 5px 10px;">
+            <!-- This will hold Jump to Current button and Play button when audio controls are hidden -->
+        </div>
+    </div>
+    
+    <!-- Loading overlay (for initial book loading only) -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <div>Loading...</div>
+        </div>
+    </div>
+    
+    <!-- Non-blocking audio generation status -->
+    <div id="audioStatus" class="audio-status">
+        <div class="mini-spinner"></div>
+        <span id="audioStatusText">Generating audio...</span>
+        <button class="skip-btn" onclick="skipAudioGeneration()">Skip</button>
+    </div>
+    
+    <!-- Bookmarks Modal -->
+    <div id="bookmarksModal" class="modal">
+        <div class="modal-content">
+            <h2>⭐ Bookmarks</h2>
+            <div class="chapter-list" id="bookmarkList">
+                <div class="loading">No bookmarks yet</div>
+            </div>
+            <div class="modal-buttons">
+                <button type="button" onclick="closeBookmarksModal()" class="btn">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Chapters Modal -->
+    <div id="chaptersModal" class="modal">
+        <div class="modal-content">
+            <h2>📖 Chapters</h2>
+            <div class="chapter-list" id="chapterList">
+                <div class="loading">Loading chapters...</div>
+            </div>
+            <div class="modal-buttons">
+                <button type="button" onclick="closeChaptersModal()" class="btn">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Settings Modal -->
+    <div id="settingsModal" class="modal">
+        <div class="modal-content">
+            <h2>⚙️ Streaming Settings</h2>
+            <form id="settingsForm" onsubmit="saveSettings(event)">
+                <label for="modelSelect">TTS Model:</label>
+                <select id="modelSelect" required onchange="updateVoiceOptions()"></select>
+                
+                <label for="voiceSelect">Voice:</label>
+                <select id="voiceSelect" required></select>
+                
+                <label for="fontSizeSelect">Font Size:</label>
+                <select id="fontSizeSelect">
+                    <option value="12">Small (12px)</option>
+                    <option value="14">Medium (14px)</option>
+                    <option value="16" selected>Normal (16px)</option>
+                    <option value="18">Large (18px)</option>
+                    <option value="20">Extra Large (20px)</option>
+                    <option value="24">Huge (24px)</option>
+                </select>
+                
+                <label for="fontFamilySelect">Font Family:</label>
+                <select id="fontFamilySelect">
+                    <option value="system" selected>System Default</option>
+                    <option value="serif">Serif</option>
+                    <option value="sans">Sans-Serif</option>
+                    <option value="mono">Monospace</option>
+                </select>
+                
+                <label for="progressModeSelect">Progress Display:</label>
+                <select id="progressModeSelect" onchange="toggleProgressMode()">
+                    <option value="book">Entire Book</option>
+                    <option value="chapter">Current Chapter</option>
+                </select>
+                
+                <label for="timeModeSelect">Time Display:</label>
+                <select id="timeModeSelect" onchange="toggleTimeMode()">
+                    <option value="total">Show Total Time</option>
+                    <option value="remaining">Show Time Remaining</option>
+                </select>
+                
+                <hr style="border: none; border-top: 1px solid var(--border-color); margin: 15px 0;">
+                
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                    <label for="showTitleToggle" style="margin: 0;">Show Title/Header</label>
+                    <input type="checkbox" id="showTitleToggle" onchange="toggleTitle()" checked style="width: 20px; height: 20px; cursor: pointer;">
+                </div>
+                
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                    <label for="showProgressBarToggle" style="margin: 0;">Show Progress Bar</label>
+                    <input type="checkbox" id="showProgressBarToggle" onchange="toggleProgressBar()" checked style="width: 20px; height: 20px; cursor: pointer;">
+                </div>
+                
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                    <label for="showImagesToggle" style="margin: 0;">Show Images (EPUB/PDF)</label>
+                    <input type="checkbox" id="showImagesToggle" onchange="toggleImages()" style="width: 20px; height: 20px; cursor: pointer;">
+                </div>
+                
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                    <label for="showSleepTimerToggle" style="margin: 0;">Show Sleep Timer</label>
+                    <input type="checkbox" id="showSleepTimerToggle" onchange="updateSleepTimer()" style="width: 20px; height: 20px; cursor: pointer;">
+                </div>
+                
+                <hr style="border: none; border-top: 1px solid var(--border-color); margin: 15px 0;">
+                
+                <label for="sleepTimerInput">Sleep Timer (minutes, 0 to disable):</label>
+                <input type="number" id="sleepTimerInput" min="0" max="180" value="0" onchange="updateSleepTimer()" style="width: 100%; padding: 8px; margin-bottom: 4px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;">
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+                    <label style="margin: 0; font-size: 12px; color: var(--text-secondary);">Timer Status:</label>
+                    <span id="sleepTimerStatusLabel" style="font-size: 0.9em; color: var(--text-secondary);">Disabled</span>
+                </div>
+                
+                <hr style="border: none; border-top: 1px solid var(--border-color); margin: 15px 0;">
+                
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                    <label for="saveStreamAudioToggle" style="margin: 0;">💾 Save Stream Audio</label>
+                    <input type="checkbox" id="saveStreamAudioToggle" style="width: 20px; height: 20px; cursor: pointer;">
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary, #888); margin: 0 0 12px 0; line-height: 1.4;">Cache generated audio chunks to disk. When you later generate a full audiobook with the same model/voice, cached chunks will be reused instead of re-generated.</p>
+                
+                <!-- Audio Cache Status -->
+                <div id="cacheStatusContainer" style="background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="font-weight: bold; font-size: 13px;">📦 Audio Cache</span>
+                        <button type="button" onclick="refreshCacheStatus()" class="btn" style="padding: 4px 8px; font-size: 11px;">Refresh</button>
+                    </div>
+                    <div id="cacheStatusContent" style="font-size: 12px; color: var(--text-secondary, #888);">
+                        Loading cache status...
+                    </div>
+                    <div id="cacheActions" style="margin-top: 10px; display: none;">
+                        <button type="button" onclick="clearAudioCache()" class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;">🗑️ Clear Cache</button>
+                    </div>
+                </div>
+                
+                <div class="modal-buttons">
+                    <button type="submit" class="btn btn-primary">Save Settings</button>
+                    <button type="button" onclick="closeSettingsModal()" class="btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <script>
+        // Pass ebook path from server
+        const EBOOK_PATH = "{{ ebook_path }}";
+    </script>
+    <script src="/static/js/stream.js"></script>
+</body>
+</html>

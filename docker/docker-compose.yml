@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  # Audiobook Server Backend
+  audiobook-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    container_name: audiobook-server
+    volumes:
+      # Persistent storage for ebooks, audiobooks, and database
+      - ../storage:/app/storage
+      - ../models.json:/app/models.json
+    env_file:
+      # Load environment variables from .env in docker directory
+      - .env
+    restart: unless-stopped
+    # Use host network mode to access any TTS server on host or network
+    network_mode: host
+    # Inline entrypoint to create symlinks for LRC path compatibility
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        DB_FILE="/app/storage/audiobooks_db.json"
+        if [ -f "$$DB_FILE" ]; then
+          HOST_PATH=$$(grep -oP '\"/.+?/storage/' "$$DB_FILE" | head -1 | sed 's|^"||' | sed 's|/storage/$$||')
+          if [ -n "$$HOST_PATH" ] && [ "$$HOST_PATH" != "/app" ]; then
+            mkdir -p "$$(dirname "$$HOST_PATH")" 2>/dev/null || true
+            if [ ! -e "$$HOST_PATH" ]; then
+              ln -s /app "$$HOST_PATH" && echo "[DOCKER] Symlink created: $$HOST_PATH -> /app"
+            fi
+          fi
+        fi
+        # Ensure relative "storage/..." paths stored in DB resolve when the
+        # server runs with working dir /app/backend. Create a backend-local
+        # storage symlink if it doesn't exist so paths like "storage/lrc/..."
+        # resolve to the mounted `/app/storage` inside the container.
+        if [ ! -e /app/backend/storage ]; then
+          ln -s /app/storage /app/backend/storage 2>/dev/null || true
+          echo "[DOCKER] Symlink ensured: /app/backend/storage -> /app/storage"
+        fi
+        cd /app/backend
+        exec uvicorn app.main:app --host $${HOST:-0.0.0.0} --port $${PORT:-8000}

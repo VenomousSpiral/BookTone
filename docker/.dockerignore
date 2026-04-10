@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Storage (will be mounted as volume)
+storage/audiobooks/*
+storage/ebooks/*
+storage/lrc/*
+
+# Development
+.git/
+.gitignore
+.vscode/
+.idea/
+*.log
+
+# Backups
+Backup/
+
+# Documentation (not needed in container)
+*.md
+!backend/README.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# Test files
+tests/
+*.test.*
