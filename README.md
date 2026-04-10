@@ -6,13 +6,14 @@ A complete self-hosted audiobook server that converts ebooks (EPUB, TXT, HTML) i
 ## ⚠️ Project Status
 
 This is a personal project in active development and may contain bugs. It is intended for users who are comfortable with self-hosting and independent troubleshooting. Not recommended for production environments.
+It has been mostly vibe coded
 
 
 ## Known Working TTS SERVERS
 https://github.com/remsky/Kokoro-FastAPI
 
 Other recomended Models:
- - VocCPM
+ - VoxCPM
  - OmniVoice
  - Chatterbox Turbo
 
