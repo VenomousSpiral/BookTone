@@ -1,6 +1,6 @@
 # Audiobook Server
 
-A complete self-hosted audiobook server that converts ebooks (EPUB, TXT, HTML) into audiobooks using TTS (Text-to-Speech) with synchronized lyrics (LRC format), bookmarks, and position tracking.
+A complete self-hosted audiobook server that converts ebooks (EPUB, TXT, HTML) into audiobooks using TTS (Text-to-Speech) with synchronized lyrics (LRC format), bookmarks, and position tracking. It does not include a TTS engine, you will need an open ai api key or to self host your own. 
 
 
 ## ⚠️ Project Status
