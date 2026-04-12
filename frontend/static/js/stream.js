@@ -24,6 +24,7 @@ const state = {
     currentAudioBlobUrl: null,
     prefetchInFlight: new Set(),
     inFlightControllers: new Set(),
+    loadingChunks: new Set(),
     progressMode: 'book',
     timeMode: 'total',
     showImages: false,
@@ -32,10 +33,10 @@ const state = {
     scroll: {
         timeout: null,
         autoInProgress: false,
-        isLoadingChunks: false,
         previousChunk: -1,
         lastManual: 0
     },
+    chunkObserver: null,
     sleepTimer: {
         enabled: false,
         minutes: 0,
@@ -52,8 +53,8 @@ const state = {
 // Constants
 const CACHE = { SIZE: 10, CONCURRENCY: 3, MAX_SIZE: 30 };
 const CHARS = { PER_MINUTE: 1000, PER_SECOND: 1000 / 60 };
-const LOAD = { INITIAL: 100, RADIUS: 75, BATCH: 20, CLEANUP_MULT: 3 };
-const SCROLL = { THRESHOLD_MULT: 3, DEBOUNCE: 30, SCROLL_DELAY: 600, MANUAL_TIMEOUT: 2000 };
+const LOAD = { INITIAL: 50, RADIUS: 150, BATCH: 100, CLEANUP_MULT: 3 };
+const SCROLL = { THRESHOLD_MULT: 6, DEBOUNCE: 16, SCROLL_DELAY: 600, MANUAL_TIMEOUT: 2000 };
 
 // ========== DOM HELPERS ==========
 const DOM = {
@@ -174,6 +175,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 window.addEventListener('beforeunload', () => {
     if (state.audioWatchdogInterval) clearInterval(state.audioWatchdogInterval);
     if (state.currentAudioBlobUrl) URL.revokeObjectURL(state.currentAudioBlobUrl);
+    if (state.chunkObserver) { state.chunkObserver.disconnect(); state.chunkObserver = null; }
     state.audioCache.clear();
     state.inFlightControllers.forEach(c => { try { c.abort(); } catch (e) { } });
     state.inFlightControllers.clear();
@@ -227,7 +229,13 @@ async function loadAllChunks() {
         DOM.textDisplay.appendChild(createChunkElement(i));
     }
 
+    // Load text content for initial chunks around current position via batch API
     await loadChunksAround(state.currentChunk, LOAD.RADIUS);
+
+    // Set up IntersectionObserver for lazy loading as user scrolls
+    setupChunkObserver();
+
+    // Also keep scroll handler for edge-case DOM expansion
     DOM.textDisplay.addEventListener('scroll', handleScroll);
 
     console.log('[STREAM] Initial chunks created');
@@ -239,8 +247,8 @@ function createChunkElement(chunkIndex) {
     div.className = 'chunk-container';
     div.dataset.chunkIndex = chunkIndex;
     div.dataset.loaded = 'false';
-    div.textContent = 'Loading...';
-    div.style.minHeight = '200px';
+    // Empty shimmer placeholder instead of "Loading..." text
+    div.style.minHeight = '120px';
     div.onclick = () => loadAndJumpToChunk(chunkIndex);
 
     if (isBookmarked(chunkIndex)) {
@@ -255,7 +263,50 @@ function createChunkElement(chunkIndex) {
     // Disable text selection
     div.style.userSelect = 'none';
     div.style.webkitUserSelect = 'none';
+
+    // Observe this chunk for lazy loading
+    if (state.chunkObserver) {
+        state.chunkObserver.observe(div);
+    }
+
     return div;
+}
+
+// ========== INTERSECTION OBSERVER FOR LAZY LOADING ==========
+function setupChunkObserver() {
+    // Disconnect any previous observer
+    if (state.chunkObserver) {
+        state.chunkObserver.disconnect();
+    }
+
+    // rootMargin makes the observer trigger well before chunks enter the viewport
+    // 2000px means we start loading chunks when they're ~2000px away
+    state.chunkObserver = new IntersectionObserver((entries) => {
+        const unloadedVisible = [];
+
+        for (const entry of entries) {
+            if (entry.isIntersecting) {
+                const el = entry.target;
+                if (el.dataset.loaded === 'false') {
+                    unloadedVisible.push(parseInt(el.dataset.chunkIndex));
+                }
+            }
+        }
+
+        if (unloadedVisible.length > 0) {
+            // Batch-load all newly-visible unloaded chunks
+            loadChunksBatch(unloadedVisible);
+        }
+    }, {
+        root: DOM.textDisplay,
+        rootMargin: '2000px 0px 2000px 0px',
+        threshold: 0
+    });
+
+    // Observe all existing chunk elements
+    DOM.textDisplay.querySelectorAll('.chunk-container').forEach(el => {
+        state.chunkObserver.observe(el);
+    });
 }
 
 function handleScroll() {
@@ -264,11 +315,6 @@ function handleScroll() {
 
     if (state.scroll.timeout) clearTimeout(state.scroll.timeout);
     state.scroll.timeout = setTimeout(() => {
-        if (state.scroll.isLoadingChunks) {
-            console.log('[STREAM] Already loading chunks, skipping');
-            return;
-        }
-
         const scrollTop = DOM.textDisplay.scrollTop;
         const scrollHeight = DOM.textDisplay.scrollHeight;
         const clientHeight = DOM.textDisplay.clientHeight;
@@ -288,39 +334,138 @@ function handleScroll() {
         let shouldLoad = false;
 
         if (distanceFromTop < threshold && firstLoaded > 0) {
-            console.log(`[STREAM] Near top (${distanceFromTop}px from top), loading earlier chunks`);
-            targetChunk = Math.max(0, firstLoaded - 30);
+            targetChunk = Math.max(0, firstLoaded - LOAD.RADIUS);
             shouldLoad = true;
         } else if (distanceFromBottom < threshold && lastLoaded < state.book.total_chunks - 1) {
-            console.log(`[STREAM] Near bottom (${distanceFromBottom}px from bottom), loading later chunks`);
-            targetChunk = Math.min(state.book.total_chunks - 1, lastLoaded + 30);
+            targetChunk = Math.min(state.book.total_chunks - 1, lastLoaded + LOAD.RADIUS);
             shouldLoad = true;
         }
 
         if (shouldLoad) {
-            // Load more chunks around the target without blocking scroll
-            loadChunksAroundAsync(targetChunk, LOAD.RADIUS);
+            // Expand DOM and load text - no blocking flag
+            loadChunksAround(targetChunk, LOAD.RADIUS);
         }
     }, SCROLL.DEBOUNCE);
 }
 
-async function loadChunksAroundAsync(centerChunk, radius = 50) {
-    if (state.scroll.isLoadingChunks) return;
-    state.scroll.isLoadingChunks = true;
-    
-    // Safety timeout - reset flag after 15 seconds in case something hangs
-    const safetyTimeout = setTimeout(() => {
-        if (state.scroll.isLoadingChunks) {
-            console.warn('[STREAM] isLoadingChunks flag stuck, resetting');
-            state.scroll.isLoadingChunks = false;
-        }
-    }, 15000);
-    
+// ========== BATCH TEXT LOADING ==========
+async function loadChunksBatch(chunkIndices) {
+    // Filter out already-loaded and already-in-flight chunks
+    const toLoad = chunkIndices.filter(idx => {
+        if (state.loadingChunks.has(idx)) return false;
+        const el = document.querySelector(`.chunk-container[data-chunk-index="${idx}"]`);
+        return el && el.dataset.loaded === 'false';
+    });
+
+    if (toLoad.length === 0) return;
+
+    // Mark as in-flight
+    toLoad.forEach(idx => state.loadingChunks.add(idx));
+
     try {
-        await loadChunksAround(centerChunk, radius);
+        const withImages = state.showImages;
+        const res = await fetch(`${API_BASE}/stream/text-batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ebook_path: EBOOK_PATH,
+                chunk_indices: toLoad,
+                with_images: withImages
+            })
+        });
+
+        if (!res.ok) throw new Error('Batch text load failed');
+
+        const result = await res.json();
+        const chunksData = result.chunks;
+
+        // Apply text to DOM elements
+        for (const idx of toLoad) {
+            const data = chunksData[String(idx)];
+            if (!data) continue;
+
+            const chunkDiv = document.querySelector(`.chunk-container[data-chunk-index="${idx}"]`);
+            if (!chunkDiv || chunkDiv.dataset.loaded === 'true') continue;
+
+            applyChunkContent(chunkDiv, idx, data);
+        }
+    } catch (error) {
+        logError('Batch chunk load error', error);
+        // Fall back to individual loading for failed chunks
+        for (const idx of toLoad) {
+            loadSingleChunk(idx).catch(() => {});
+        }
     } finally {
-        clearTimeout(safetyTimeout);
-        state.scroll.isLoadingChunks = false;
+        toLoad.forEach(idx => state.loadingChunks.delete(idx));
+    }
+}
+
+function applyChunkContent(chunkDiv, chunkIndex, data) {
+    // Clear and rebuild chunk content
+    chunkDiv.innerHTML = '';
+
+    // Handle inline images if available and enabled
+    if (state.showImages && data.image_data && data.image_data.length > 0 && data.display_text) {
+        // Use display_text which contains the markers
+        let text = data.display_text;
+
+        // Load images asynchronously - don't block text display
+        const fragment = document.createDocumentFragment();
+
+        // Find all marker positions in the display_text
+        const markerPositions = data.image_data
+            .map(imgData => ({
+                pos: text.indexOf(imgData.marker),
+                marker: imgData.marker,
+                length: imgData.marker.length,
+                id: imgData.id
+            }))
+            .filter(m => m.pos >= 0)
+            .sort((a, b) => a.pos - b.pos);
+
+        let lastPos = 0;
+        for (const markerInfo of markerPositions) {
+            // Add text before marker
+            if (markerInfo.pos > lastPos) {
+                const textBefore = text.substring(lastPos, markerInfo.pos);
+                fragment.appendChild(document.createTextNode(textBefore));
+            }
+
+            // Add image placeholder, load async
+            const imageWrapper = document.createElement('div');
+            imageWrapper.className = 'inline-image-wrapper';
+            fragment.appendChild(imageWrapper);
+
+            // Load image async (don't await)
+            loadImage(markerInfo.id).then(img => {
+                if (img) imageWrapper.appendChild(img);
+            });
+
+            lastPos = markerInfo.pos + markerInfo.length;
+        }
+
+        // Add remaining text
+        if (lastPos < text.length) {
+            fragment.appendChild(document.createTextNode(text.substring(lastPos)));
+        }
+
+        chunkDiv.appendChild(fragment);
+    } else {
+        // No images, just add text (use clean text)
+        const textNode = document.createTextNode(data.text);
+        chunkDiv.appendChild(textNode);
+    }
+
+    chunkDiv.dataset.loaded = 'true';
+    chunkDiv.style.minHeight = '';
+
+    if (isBookmarked(chunkIndex)) {
+        chunkDiv.classList.add('bookmarked');
+    }
+
+    // Stop observing loaded chunks to save resources
+    if (state.chunkObserver) {
+        state.chunkObserver.unobserve(chunkDiv);
     }
 }
 
@@ -345,7 +490,6 @@ async function loadChunksAround(centerChunk, radius = 25) {
         const topVisible = visibleChunks[0];
         scrollAnchorIndex = parseInt(topVisible.dataset.chunkIndex);
         scrollAnchorOffset = topVisible.getBoundingClientRect().top - textDisplay.getBoundingClientRect().top;
-        console.log(`[STREAM] Scroll anchor: chunk ${scrollAnchorIndex} at offset ${scrollAnchorOffset}px`);
     }
 
     const existingChunks = new Set();
@@ -356,13 +500,15 @@ async function loadChunksAround(centerChunk, radius = 25) {
         existingElements.set(idx, chunk);
     });
 
+    // Remove chunks that are very far away
     for (const [idx, element] of existingElements) {
         if (Math.abs(idx - centerChunk) > radius * LOAD.CLEANUP_MULT) {
+            if (state.chunkObserver) state.chunkObserver.unobserve(element);
             element.remove();
-            console.log(`[STREAM] Removed far chunk ${idx}`);
         }
     }
 
+    // Insert missing chunk elements into the DOM
     for (let i = startChunk; i <= endChunk; i++) {
         if (!existingChunks.has(i)) {
             // Find correct position to insert
@@ -386,29 +532,34 @@ async function loadChunksAround(centerChunk, radius = 25) {
         }
     }
 
+    // Restore scroll position after DOM changes
     if (scrollAnchorIndex !== null) {
         const anchorElement = document.querySelector(`.chunk-container[data-chunk-index="${scrollAnchorIndex}"]`);
         if (anchorElement) {
             const currentOffset = anchorElement.getBoundingClientRect().top - textDisplay.getBoundingClientRect().top;
             const scrollAdjustment = currentOffset - scrollAnchorOffset;
-            if (Math.abs(scrollAdjustment) > 1) { // Only adjust if difference is significant
+            if (Math.abs(scrollAdjustment) > 1) {
                 textDisplay.scrollTop += scrollAdjustment;
-                console.log(`[STREAM] Adjusted scroll by ${scrollAdjustment}px to maintain position`);
             }
         }
     }
 
+    // Collect unloaded chunks, prioritize by distance from center
     const chunksToLoad = [];
     for (let i = startChunk; i <= endChunk; i++) {
         const chunkDiv = textDisplay.querySelector(`.chunk-container[data-chunk-index="${i}"]`);
-        if (chunkDiv?.dataset.loaded === 'false') chunksToLoad.push(i);
+        if (chunkDiv?.dataset.loaded === 'false' && !state.loadingChunks.has(i)) {
+            chunksToLoad.push(i);
+        }
     }
 
+    // Sort by distance from center (load nearest first)
+    chunksToLoad.sort((a, b) => Math.abs(a - centerChunk) - Math.abs(b - centerChunk));
+
+    // Load in batches via batch API
     for (let i = 0; i < chunksToLoad.length; i += LOAD.BATCH) {
         const batch = chunksToLoad.slice(i, i + LOAD.BATCH);
-        await Promise.all(batch.map(idx => loadSingleChunk(idx)));
-
-        // No delay between batches - load as fast as possible to prevent wall
+        await loadChunksBatch(batch);
     }
 }
 
@@ -416,81 +567,16 @@ async function loadSingleChunk(chunkIndex) {
     try {
         const chunkDiv = document.querySelector(`.chunk-container[data-chunk-index="${chunkIndex}"]`);
         if (!chunkDiv || chunkDiv.dataset.loaded === 'true') return;
+        if (state.loadingChunks.has(chunkIndex)) return;
+
+        state.loadingChunks.add(chunkIndex);
 
         const withImages = state.showImages ? '&with_images=true' : '';
         const res = await fetch(`${API_BASE}/stream/text?ebook_path=${encodeURIComponent(EBOOK_PATH)}&chunk_index=${chunkIndex}${withImages}`);
         if (!res.ok) throw new Error('Failed to load chunk text');
 
         const data = await res.json();
-        
-        // Clear and rebuild chunk content
-        chunkDiv.innerHTML = '';
-        
-        // Handle inline images if available and enabled
-        if (state.showImages && data.image_data && data.image_data.length > 0 && data.display_text) {
-            // Use display_text which contains the markers
-            let text = data.display_text;
-            
-            // Load all images first
-            const imageElements = new Map();
-            for (const imgData of data.image_data) {
-                const img = await loadImage(imgData.id);
-                if (img) {
-                    imageElements.set(imgData.marker, img);
-                }
-            }
-            
-            // Split text by markers and build content with inline images
-            let lastPos = 0;
-            const fragment = document.createDocumentFragment();
-            
-            // Find all marker positions in the display_text
-            const markerPositions = data.image_data
-                .map(imgData => ({
-                    pos: text.indexOf(imgData.marker),
-                    marker: imgData.marker,
-                    length: imgData.marker.length
-                }))
-                .filter(m => m.pos >= 0)
-                .sort((a, b) => a.pos - b.pos);
-            
-            for (const markerInfo of markerPositions) {
-                // Add text before marker
-                if (markerInfo.pos > lastPos) {
-                    const textBefore = text.substring(lastPos, markerInfo.pos);
-                    fragment.appendChild(document.createTextNode(textBefore));
-                }
-                
-                // Add image
-                const img = imageElements.get(markerInfo.marker);
-                if (img) {
-                    const imageWrapper = document.createElement('div');
-                    imageWrapper.className = 'inline-image-wrapper';
-                    imageWrapper.appendChild(img.cloneNode(true));
-                    fragment.appendChild(imageWrapper);
-                }
-                
-                lastPos = markerInfo.pos + markerInfo.length;
-            }
-            
-            // Add remaining text
-            if (lastPos < text.length) {
-                fragment.appendChild(document.createTextNode(text.substring(lastPos)));
-            }
-            
-            chunkDiv.appendChild(fragment);
-        } else {
-            // No images, just add text (use clean text)
-            const textNode = document.createTextNode(data.text);
-            chunkDiv.appendChild(textNode);
-        }
-        
-        chunkDiv.dataset.loaded = 'true';
-        chunkDiv.style.minHeight = '';
-
-        if (isBookmarked(chunkIndex)) {
-            chunkDiv.classList.add('bookmarked');
-        }
+        applyChunkContent(chunkDiv, chunkIndex, data);
     } catch (error) {
         logError('Chunk load error', error);
         const chunkDiv = document.querySelector(`.chunk-container[data-chunk-index="${chunkIndex}"]`);
@@ -498,6 +584,8 @@ async function loadSingleChunk(chunkIndex) {
             chunkDiv.textContent = `[Error loading chunk ${chunkIndex}]`;
             chunkDiv.style.minHeight = '';
         }
+    } finally {
+        state.loadingChunks.delete(chunkIndex);
     }
 }
 
@@ -1674,8 +1762,10 @@ async function toggleImages() {
         // Mark all chunks as needing reload
         document.querySelectorAll('.chunk-container').forEach(chunk => {
             chunk.dataset.loaded = 'false';
-            chunk.textContent = 'Loading...';
-            chunk.style.minHeight = '200px';
+            chunk.innerHTML = '';
+            chunk.style.minHeight = '120px';
+            // Re-observe for lazy loading
+            if (state.chunkObserver) state.chunkObserver.observe(chunk);
         });
         // Reload current chunks
         await loadChunksAround(state.currentChunk, LOAD.RADIUS);
@@ -2012,8 +2102,14 @@ function shutdownAndNavigate(targetHref) {
     // Reset all blocking flags
     state.isJumping = false;
     state.isGeneratingAudio = false;
-    state.scroll.isLoadingChunks = false;
+    state.loadingChunks.clear();
     state.isUserStopping = true;
+
+    // Clean up observer
+    if (state.chunkObserver) {
+        state.chunkObserver.disconnect();
+        state.chunkObserver = null;
+    }
 
     state.inFlightControllers.forEach(c => { try { c.abort(); } catch (e) { } });
     state.inFlightControllers.clear();

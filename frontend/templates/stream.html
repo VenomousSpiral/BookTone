@@ -63,6 +63,25 @@
             -ms-user-select: none;
             touch-action: manipulation;
             transition: all 0.2s ease;
+            content-visibility: auto;
+            contain-intrinsic-size: auto 120px;
+        }
+        
+        /* Shimmer placeholder for unloaded chunks */
+        .chunk-container[data-loaded="false"] {
+            background: linear-gradient(
+                90deg,
+                rgba(255, 255, 255, 0.02) 25%,
+                rgba(255, 255, 255, 0.06) 50%,
+                rgba(255, 255, 255, 0.02) 75%
+            );
+            background-size: 200% 100%;
+            animation: shimmer 1.5s ease-in-out infinite;
+        }
+        
+        @keyframes shimmer {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
         }
         
         /* Hover effect only on devices with mouse/pointer */

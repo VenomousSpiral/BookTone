@@ -141,16 +141,18 @@ def save_user_preferences(prefs: dict):
 @router.get("/preferences/get")
 async def get_user_preferences():
     """Get user preferences"""
-    print("[PREFERENCES] GET /preferences/get called")
+    if settings.DEBUG:
+        print("[PREFERENCES] GET /preferences/get called")
     prefs = load_user_preferences()
-    print(f"[PREFERENCES] Returning preferences: {prefs}")
+    if settings.DEBUG:
+        print(f"[PREFERENCES] Returning preferences: {prefs}")
     return prefs
 
 @router.post("/preferences/save")
 async def save_preferences(prefs: UserPreferences):
     """Save user preferences"""
-    print(f"[PREFERENCES] POST /preferences/save called with: {prefs}")
-    
+    if settings.DEBUG:
+        print(f"[PREFERENCES] POST /preferences/save called with: {prefs}")
     # Load existing preferences to preserve audiobooks tracking data
     existing_prefs = load_user_preferences()
     
@@ -163,7 +165,8 @@ async def save_preferences(prefs: UserPreferences):
         prefs_dict['audiobooks'] = existing_prefs.get('audiobooks', {})
     
     save_user_preferences(prefs_dict)
-    print(f"[PREFERENCES] Saved preferences (with preserved audiobooks data): {prefs_dict}")
+    if settings.DEBUG:
+        print(f"[PREFERENCES] Saved preferences (with preserved audiobooks data): {prefs_dict}")
     return {"message": "Preferences saved", "preferences": prefs_dict}
 
 

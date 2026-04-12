@@ -4,7 +4,7 @@ API routes for streaming mode (on-demand TTS generation)
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import io
 
 from app.services.stream_service import StreamService
@@ -50,6 +50,13 @@ class ToggleBookmarkRequest(BaseModel):
     ebook_path: str
     chunk_index: int
     text_preview: Optional[str] = ""  # Text preview to store with bookmark
+
+
+class TextBatchRequest(BaseModel):
+    """Request to get text for multiple chunks at once"""
+    ebook_path: str
+    chunk_indices: List[int]
+    with_images: bool = False
 
 
 @router.get("/parse")
@@ -149,6 +156,44 @@ async def get_text_segment(
             # Get text by char range
             text = stream_service.get_text_segment(ebook_path, start_char, end_char)
             return {"text": text, "start_char": start_char, "end_char": end_char}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/text-batch")
+async def get_text_batch(request: TextBatchRequest):
+    """
+    Get text for multiple chunks in one request.
+    Returns a dict of chunk_index -> chunk data.
+    Much more efficient than fetching each chunk individually.
+    """
+    try:
+        if request.with_images:
+            ebook_data = stream_service.parse_ebook_with_images(request.ebook_path)
+        else:
+            ebook_data = stream_service.parse_ebook_for_streaming(request.ebook_path)
+
+        chunks = ebook_data["chunks"]
+        result = {}
+
+        for idx in request.chunk_indices:
+            if idx < 0 or idx >= len(chunks):
+                continue
+            chunk = chunks[idx]
+            chunk_data = {
+                "text": chunk["text"],
+                "start_char": chunk["start_idx"],
+                "end_char": chunk["end_idx"],
+                "chunk_index": idx
+            }
+            if request.with_images:
+                chunk_data["display_text"] = chunk.get("display_text", chunk["text"])
+                chunk_data["image_data"] = chunk.get("image_data", [])
+            result[str(idx)] = chunk_data
+
+        return {"chunks": result}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

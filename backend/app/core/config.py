@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     
     # App settings
     APP_NAME: str = "Audiobook Server"
-    DEBUG: bool = True
+    DEBUG: bool = False
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     
@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     )
 
     def __init__(self, **kwargs):
+        # Explicitly set DEBUG to False, ignoring any environment variable
+        kwargs['DEBUG'] = False
         super().__init__(**kwargs)
         # Create directories if they don't exist
         self.EBOOKS_DIR.mkdir(parents=True, exist_ok=True)
