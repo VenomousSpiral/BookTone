@@ -1,0 +1,32 @@
+{
+    "name": "Dark",
+    "description": "Default dark theme",
+    "variables": {
+        "--bg-primary": "#1a1a1a",
+        "--bg-secondary": "#2d2d2d",
+        "--bg-tertiary": "#3d3d3d",
+        "--text-primary": "#e0e0e0",
+        "--text-secondary": "#b0b0b0",
+        "--accent": "#4a9eff",
+        "--accent-hover": "#3a7ed8",
+        "--border": "#404040",
+        "--success": "#4caf50",
+        "--error": "#f44336",
+        "--warning": "#ff9800",
+        "--primary-color": "#4a9eff",
+        "--primary-color-dark": "#3a7ed8",
+        "--primary-color-light": "rgba(74, 158, 255, 0.2)",
+        "--modal-overlay": "rgba(0, 0, 0, 0.8)",
+        "--image-overlay": "rgba(0, 0, 0, 0.9)",
+        "--toast-bg": "rgba(0, 0, 0, 0.8)",
+        "--toast-text": "#fff",
+        "--scrollbar-track": "#3d3d3d",
+        "--scrollbar-thumb": "#404040",
+        "--hover-bg": "#404040",
+        "--shadow-color": "rgba(0, 0, 0, 0.3)",
+        "--info-toast-bg": "rgba(255, 255, 255, 0.95)",
+        "--info-toast-text": "#000",
+        "--success-toast-bg": "rgba(76, 175, 80, 0.95)",
+        "--error-toast-bg": "rgba(244, 67, 54, 0.95)"
+    }
+}

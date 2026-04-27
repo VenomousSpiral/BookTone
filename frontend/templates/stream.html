@@ -556,6 +556,9 @@
         <div class="modal-content">
             <h2>⚙️ Streaming Settings</h2>
             <form id="settingsForm" onsubmit="saveSettings(event)">
+                <label for="streamThemeSelector">Theme:</label>
+                <select id="streamThemeSelector" onchange="ThemeManager.applyTheme(this.value)" style="width:100%;padding:10px;background-color:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:5px;margin-bottom:15px;"></select>
+
                 <label for="modelSelect">TTS Model:</label>
                 <select id="modelSelect" required onchange="updateVoiceOptions()"></select>
                 
@@ -657,6 +660,7 @@
         // Pass ebook path from server
         const EBOOK_PATH = "{{ ebook_path }}";
     </script>
+    <script src="/static/js/theme-manager.js?v=2"></script>
     <script src="/static/js/stream.js"></script>
 </body>
 </html>

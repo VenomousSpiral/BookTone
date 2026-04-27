@@ -10,26 +10,36 @@ class FileManager:
     def __init__(self):
         self.base_dir = settings.EBOOKS_DIR
     
-    def list_files(self, subpath: str = "") -> List[Dict]:
-        """List files and directories in a path"""
+    def list_files(self, subpath: str = "", limit: int = 100, offset: int = 0) -> List[Dict]:
+        """List files and directories in a path with pagination"""
         target_dir = self.base_dir / subpath
-        
+
         if not target_dir.exists():
             raise ValueError(f"Directory not found: {subpath}")
-        
+
         items = []
-        
+        count = 0
+        skipped = 0
+
         for item in sorted(target_dir.iterdir()):
+            if skipped < offset:
+                skipped += 1
+                continue
+            if count >= limit:
+                break
+
             rel_path = item.relative_to(self.base_dir)
-            
+            is_dir = item.is_dir()
+
             items.append({
                 'name': item.name,
                 'path': str(rel_path),
-                'is_directory': item.is_dir(),
-                'size': item.stat().st_size if item.is_file() else 0,
+                'is_directory': is_dir,
+                'size': item.stat().st_size if not is_dir else 0,
                 'modified': item.stat().st_mtime
             })
-        
+            count += 1
+
         return items
     
     def save_uploaded_file(self, file: UploadFile, subpath: str = "") -> Path:

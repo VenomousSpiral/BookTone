@@ -100,7 +100,7 @@ const showToast = (message) => {
         toast = document.createElement('div');
         toast.id = 'toast';
         toast.style.cssText = `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
-            background:rgba(0,0,0,0.8);color:#fff;padding:10px 20px;border-radius:20px;
+            background:var(--toast-bg);color:var(--toast-text);padding:10px 20px;border-radius:20px;
             z-index:10000;opacity:0;transition:opacity 0.3s;`;
         document.body.appendChild(toast);
     }
@@ -1547,12 +1547,12 @@ async function showChapters() {
             const item = document.createElement('div');
             item.className = 'bookmark-item';
             item.style.cssText = `padding:12px;margin:8px 0;background-color:var(--bg-tertiary);
-                border-left:4px solid #4a9eff;border-radius:5px;cursor:pointer;transition:all 0.3s;`;
+                border-left:4px solid var(--accent);border-radius:5px;cursor:pointer;transition:all 0.3s;`;
 
             item.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:center;">
                     <div style="flex:1;">
-                        <div style="color:#4a9eff;font-size:12px;margin-bottom:4px;">
+                        <div style="color:var(--accent);font-size:12px;margin-bottom:4px;">
                             📖 Chapter ${i + 1} • ${formatTime(chapter.timestamp)}
                         </div>
                         <div style="color:var(--text-primary);font-weight:500;">

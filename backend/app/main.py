@@ -47,6 +47,13 @@ async def stream_page(request: Request, ebook: str):
     """Serve the streaming player interface"""
     return templates.TemplateResponse("stream.html", {"request": request, "ebook_path": ebook})
 
+@app.get("/test-performance", response_class=HTMLResponse)
+async def test_performance_page(request: Request):
+    """Serve the performance test page"""
+    from fastapi.responses import FileResponse
+    test_file = Path(__file__).parent.parent.parent / "frontend" / "test-performance" / "index.html"
+    return FileResponse(test_file)
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}

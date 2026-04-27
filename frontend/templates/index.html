@@ -280,6 +280,10 @@
             <h2>⚙️ Display Settings</h2>
             <div style="display: flex; flex-direction: column; gap: 20px; margin: 20px 0;">
                 <div>
+                    <label for="themeSelector" style="display: block; margin-bottom: 8px;">Theme:</label>
+                    <select id="themeSelector" onchange="ThemeManager.applyTheme(this.value)" style="width: 100%;"></select>
+                </div>
+                <div>
                     <label for="fontSizeSelect" style="display: block; margin-bottom: 8px;">Font Size:</label>
                     <select id="fontSizeSelect" onchange="updateFontSettings()" style="width: 100%;">
                         <option value="12">Small (12px)</option>
@@ -353,6 +357,7 @@
     <!-- Move Menu Modal -->
     <div id="moveMenu" class="modal"></div>
 
+    <script src="/static/js/theme-manager.js?v=1"></script>
     <script src="/static/js/app.js?v=21"></script>
     <script src="/static/js/player.js?v=21"></script>
     <script src="/static/js/file-manager.js?v=21"></script>

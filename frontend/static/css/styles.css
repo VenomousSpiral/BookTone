@@ -1,4 +1,4 @@
-/* Dark Mode Theme */
+/* Theme Variables - Loaded from JSON files */
 :root {
     --bg-primary: #1a1a1a;
     --bg-secondary: #2d2d2d;
@@ -8,13 +8,24 @@
     --accent: #4a9eff;
     --accent-hover: #3a7ed8;
     --border: #404040;
-    --border-color: #404040;
     --success: #4caf50;
     --error: #f44336;
     --warning: #ff9800;
     --primary-color: #4a9eff;
     --primary-color-dark: #3a7ed8;
     --primary-color-light: rgba(74, 158, 255, 0.2);
+    --modal-overlay: rgba(0, 0, 0, 0.8);
+    --image-overlay: rgba(0, 0, 0, 0.9);
+    --toast-bg: rgba(0, 0, 0, 0.8);
+    --toast-text: #fff;
+    --scrollbar-track: #3d3d3d;
+    --scrollbar-thumb: #404040;
+    --hover-bg: #404040;
+    --shadow-color: rgba(0, 0, 0, 0.3);
+    --info-toast-bg: rgba(255, 255, 255, 0.95);
+    --info-toast-text: #000;
+    --success-toast-bg: rgba(76, 175, 80, 0.95);
+    --error-toast-bg: rgba(244, 67, 54, 0.95);
 }
 
 * {
@@ -227,7 +238,7 @@ nav {
 .audiobook-item:hover,
 .model-item:hover {
     border-color: var(--accent);
-    background-color: #404040;
+    background-color: var(--hover-bg);
 }
 
 .file-info,
@@ -593,11 +604,11 @@ nav {
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--bg-tertiary);
+    background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--border);
+    background: var(--scrollbar-thumb);
     border-radius: 5px;
 }
 

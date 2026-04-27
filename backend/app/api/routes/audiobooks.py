@@ -104,6 +104,7 @@ class UserPreferences(BaseModel):
     show_images: Optional[bool] = False
     sleep_timer_minutes: Optional[int] = 0
     show_sleep_timer: Optional[bool] = False
+    theme: Optional[str] = "default"
     audiobooks: Optional[dict] = {}  # Track audiobook play times: {id: {last_played: timestamp}}
 
 USER_PREFS_FILE = settings.STORAGE_DIR / "user_preferences.json"
@@ -127,6 +128,7 @@ def load_user_preferences():
         "show_images": False,
         "sleep_timer_minutes": 0,
         "show_sleep_timer": False,
+        "theme": "default",
         "audiobooks": {}
     }
 
@@ -168,6 +170,28 @@ async def save_preferences(prefs: UserPreferences):
     if settings.DEBUG:
         print(f"[PREFERENCES] Saved preferences (with preserved audiobooks data): {prefs_dict}")
     return {"message": "Preferences saved", "preferences": prefs_dict}
+
+class TrackingRequest(BaseModel):
+    ebook_path: str
+    event: str = "playback_start"
+
+@router.post("/preferences/tracking")
+async def track_playback(request: TrackingRequest):
+    """Lightweight tracking endpoint - updates only one field without full round-trip"""
+    try:
+        prefs = load_user_preferences()
+        if not prefs.get('audiobooks'):
+            prefs['audiobooks'] = {}
+        prefs['audiobooks'][request.ebook_path] = {
+            'last_played': int(__import__('time').time() * 1000),
+            'event': request.event
+        }
+        save_user_preferences(prefs)
+        return {"message": "tracked"}
+    except Exception as e:
+        if settings.DEBUG:
+            print(f"[TRACKING] Error: {e}")
+        return {"message": "error"}, 500
 
 
 # Directory management endpoints (must come before /{audiobook_id} routes)

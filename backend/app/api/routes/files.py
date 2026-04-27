@@ -22,11 +22,18 @@ class CreateFileRequest(BaseModel):
     content: Optional[str] = ""
 
 @router.get("/list")
-async def list_files(path: str = Query("", description="Subdirectory path")):
-    """List all ebooks in a directory"""
+async def list_files(
+    path: str = Query("", description="Subdirectory path"),
+    limit: int = Query(100, ge=1, le=500, description="Max items to return"),
+    offset: int = Query(0, ge=0, description="Number of items to skip"),
+):
+    """List ebooks in a directory with pagination"""
     try:
-        files = file_manager.list_files(path)
-        return {"files": files, "path": path}
+        files = file_manager.list_files(path, limit=limit, offset=offset)
+        has_more = len(files) >= limit
+        if has_more:
+            files = files[:-1]  # Remove the extra item used to detect more
+        return {"files": files, "path": path, "has_more": has_more}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

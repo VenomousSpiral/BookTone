@@ -1,0 +1,32 @@
+{
+    "name": "VS Code Dark",
+    "description": "Visual Studio Code inspired dark theme",
+    "variables": {
+        "--bg-primary": "#1e1e1e",
+        "--bg-secondary": "#252526",
+        "--bg-tertiary": "#2d2d30",
+        "--text-primary": "#d4d4d4",
+        "--text-secondary": "#808080",
+        "--accent": "#007acc",
+        "--accent-hover": "#0062a3",
+        "--border": "#3e3e42",
+        "--success": "#4ec9b0",
+        "--error": "#f14c4c",
+        "--warning": "#cca700",
+        "--primary-color": "#007acc",
+        "--primary-color-dark": "#0062a3",
+        "--primary-color-light": "rgba(0, 122, 204, 0.2)",
+        "--modal-overlay": "rgba(0, 0, 0, 0.7)",
+        "--image-overlay": "rgba(0, 0, 0, 0.9)",
+        "--toast-bg": "rgba(0, 0, 0, 0.8)",
+        "--toast-text": "#d4d4d4",
+        "--scrollbar-track": "#1e1e1e",
+        "--scrollbar-thumb": "#424242",
+        "--hover-bg": "#2a2d2e",
+        "--shadow-color": "rgba(0, 0, 0, 0.4)",
+        "--info-toast-bg": "rgba(212, 212, 212, 0.95)",
+        "--info-toast-text": "#1e1e1e",
+        "--success-toast-bg": "rgba(78, 201, 176, 0.95)",
+        "--error-toast-bg": "rgba(241, 76, 76, 0.95)"
+    }
+}
