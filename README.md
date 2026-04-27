@@ -40,6 +40,13 @@ Other recomended Models:
 - **Click to Seek**: Tap any line to jump to that position in audio
 - **Progress Tracking**: Visual progress indicator and time display
 
+### Themes
+- **Dark Mode**: Modern dark-themed interface optimized for reading
+- **Multiple Themes**: Built-in themes (Dark, VS Code Dark, Monokai Secrets)
+- **Change Themes**: Select from the Settings modal in the player (⚙️ button)
+- **Persisted**: Theme choice saves to server and syncs across devices
+- **Easy to Add**: Drop a JSON file into `frontend/static/themes/` — see below
+
 ### Data Persistence
 - All bookmarks saved to disk
 - Playback positions persist across server restarts
@@ -420,6 +427,86 @@ DEBUG=True
 - Chunk size (default: sentence-based, 5 words minimum, 21 chars minimum)
 - API timeouts
 - TTS delay (0.5s between chunks to prevent CUDA errors)
+
+### Adding Themes
+
+Themes are defined as simple JSON files in `frontend/static/themes/`. Each theme maps CSS custom properties to color values.
+
+**Step 1:** Create a new JSON file, e.g. `frontend/static/themes/ocean.json`:
+
+```json
+{
+    "name": "Ocean",
+    "description": "Deep blue ocean theme",
+    "variables": {
+        "--bg-primary": "#0a192f",
+        "--bg-secondary": "#112240",
+        "--bg-tertiary": "#233554",
+        "--text-primary": "#ccd6f6",
+        "--text-secondary": "#8892b0",
+        "--accent": "#64ffda",
+        "--accent-hover": "#4fd1b5",
+        "--border": "#233554",
+        "--success": "#64ffda",
+        "--error": "#ff6b6b",
+        "--warning": "#ffd166",
+        "--primary-color": "#64ffda",
+        "--primary-color-dark": "#4fd1b5",
+        "--primary-color-light": "rgba(100, 255, 218, 0.1)",
+        "--modal-overlay": "rgba(0, 0, 0, 0.8)",
+        "--image-overlay": "rgba(0, 0, 0, 0.9)",
+        "--toast-bg": "rgba(0, 0, 0, 0.8)",
+        "--toast-text": "#ccd6f6",
+        "--scrollbar-track": "#233554",
+        "--scrollbar-thumb": "#495670",
+        "--hover-bg": "#1d3353",
+        "--shadow-color": "rgba(0, 0, 0, 0.4)",
+        "--info-toast-bg": "rgba(204, 214, 246, 0.95)",
+        "--info-toast-text": "#0a192f",
+        "--success-toast-bg": "rgba(100, 255, 218, 0.95)",
+        "--error-toast-bg": "rgba(255, 107, 107, 0.95)"
+    }
+}
+```
+
+**Step 2:** Register the theme in `frontend/static/js/theme-manager.js`. Add the filename to the `themeNames` array in `init()`:
+
+```js
+const themeNames = ['default', 'vscode-dark', 'secrets', 'ocean'];
+```
+
+That's it — the theme will appear in the Settings dropdown on both the main page and streaming page.
+
+**Available CSS Variables:**
+
+| Variable | Purpose |
+|---|---|
+| `--bg-primary` | Body / main background |
+| `--bg-secondary` | Header, panel backgrounds |
+| `--bg-tertiary` | Cards, inputs, nav backgrounds |
+| `--text-primary` | Main text color |
+| `--text-secondary` | Muted / descriptive text |
+| `--accent` | Primary interactive color (buttons, active tabs) |
+| `--accent-hover` | Darker accent for hover states |
+| `--border` | Card / button borders |
+| `--success` | Completed / positive status |
+| `--error` | Danger / failed status |
+| `--warning` | Pending / warning status |
+| `--primary-color` | Streaming player accent (alias of accent) |
+| `--primary-color-dark` | Streaming player hover accent |
+| `--primary-color-light` | Subtle highlight background |
+| `--modal-overlay` | Modal backdrop opacity |
+| `--image-overlay` | Fullscreen image modal backdrop |
+| `--toast-bg` | Toast notification background |
+| `--toast-text` | Toast notification text |
+| `--scrollbar-track` | Scrollbar track |
+| `--scrollbar-thumb` | Scrollbar thumb |
+| `--hover-bg` | Card hover background |
+| `--shadow-color` | Drop shadow color |
+| `--info-toast-bg` | Info toast background |
+| `--info-toast-text` | Info toast text |
+| `--success-toast-bg` | Success toast background |
+| `--error-toast-bg` | Error toast background |
 
 ## 🛠️ Troubleshooting
 
