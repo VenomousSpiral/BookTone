@@ -1,0 +1,32 @@
+{
+    "name": "Emerald City",
+    "description": "Luxurious green and gold inspired by the Emerald City",
+    "variables": {
+        "--bg-primary": "#0a1f0a",
+        "--bg-secondary": "#0f2b0f",
+        "--bg-tertiary": "#143714",
+        "--text-primary": "#c5e8c5",
+        "--text-secondary": "#7fb87f",
+        "--accent": "#00e676",
+        "--accent-hover": "#00c853",
+        "--border": "#1a4a1a",
+        "--success": "#69f0ae",
+        "--error": "#ff5252",
+        "--warning": "#ffd740",
+        "--primary-color": "#00e676",
+        "--primary-color-dark": "#00c853",
+        "--primary-color-light": "rgba(0, 230, 118, 0.15)",
+        "--modal-overlay": "rgba(10, 31, 10, 0.85)",
+        "--image-overlay": "rgba(10, 31, 10, 0.9)",
+        "--toast-bg": "rgba(15, 43, 15, 0.9)",
+        "--toast-text": "#c5e8c5",
+        "--scrollbar-track": "#0f2b0f",
+        "--scrollbar-thumb": "#143714",
+        "--hover-bg": "#143714",
+        "--shadow-color": "rgba(0, 230, 118, 0.1)",
+        "--info-toast-bg": "rgba(0, 230, 118, 0.95)",
+        "--info-toast-text": "#0a1f0a",
+        "--success-toast-bg": "rgba(105, 240, 174, 0.95)",
+        "--error-toast-bg": "rgba(255, 82, 82, 0.95)"
+    }
+}

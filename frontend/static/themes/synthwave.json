@@ -1,0 +1,32 @@
+{
+    "name": "Synthwave",
+    "description": "80s retro neon with magenta, cyan, and purple gradients",
+    "variables": {
+        "--bg-primary": "#1a0a2e",
+        "--bg-secondary": "#2d1b4e",
+        "--bg-tertiary": "#3d2b5e",
+        "--text-primary": "#ffb8d9",
+        "--text-secondary": "#c5a3ff",
+        "--accent": "#ff71ce",
+        "--accent-hover": "#ff2ee0",
+        "--border": "#3d2b5e",
+        "--success": "#01cd92",
+        "--error": "#ff0054",
+        "--warning": "#fffc00",
+        "--primary-color": "#ff71ce",
+        "--primary-color-dark": "#ff2ee0",
+        "--primary-color-light": "rgba(255, 113, 206, 0.2)",
+        "--modal-overlay": "rgba(26, 10, 46, 0.85)",
+        "--image-overlay": "rgba(26, 10, 46, 0.9)",
+        "--toast-bg": "rgba(45, 27, 78, 0.9)",
+        "--toast-text": "#ffb8d9",
+        "--scrollbar-track": "#2d1b4e",
+        "--scrollbar-thumb": "#3d2b5e",
+        "--hover-bg": "#3d2b5e",
+        "--shadow-color": "rgba(255, 113, 206, 0.2)",
+        "--info-toast-bg": "rgba(1, 205, 146, 0.95)",
+        "--info-toast-text": "#1a0a2e",
+        "--success-toast-bg": "rgba(1, 205, 146, 0.95)",
+        "--error-toast-bg": "rgba(255, 0, 84, 0.95)"
+    }
+}

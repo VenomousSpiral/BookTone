@@ -1,0 +1,32 @@
+{
+    "name": "Tokyo Night",
+    "description": "Tokyo night cityscape with deep purples and neon highlights",
+    "variables": {
+        "--bg-primary": "#1a1b26",
+        "--bg-secondary": "#24283b",
+        "--bg-tertiary": "#2a2e3f",
+        "--text-primary": "#c0caf5",
+        "--text-secondary": "#878f9f",
+        "--accent": "#bb9af7",
+        "--accent-hover": "#9d7cd8",
+        "--border": "#3b4261",
+        "--success": "#9ece6a",
+        "--error": "#f7768e",
+        "--warning": "#e0af68",
+        "--primary-color": "#bb9af7",
+        "--primary-color-dark": "#9d7cd8",
+        "--primary-color-light": "rgba(187, 154, 247, 0.15)",
+        "--modal-overlay": "rgba(26, 27, 38, 0.85)",
+        "--image-overlay": "rgba(26, 27, 38, 0.9)",
+        "--toast-bg": "rgba(36, 40, 59, 0.9)",
+        "--toast-text": "#c0caf5",
+        "--scrollbar-track": "#24283b",
+        "--scrollbar-thumb": "#2a2e3f",
+        "--hover-bg": "#2a2e3f",
+        "--shadow-color": "rgba(0, 0, 0, 0.4)",
+        "--info-toast-bg": "rgba(187, 154, 247, 0.95)",
+        "--info-toast-text": "#1a1b26",
+        "--success-toast-bg": "rgba(158, 206, 106, 0.95)",
+        "--error-toast-bg": "rgba(247, 118, 142, 0.95)"
+    }
+}

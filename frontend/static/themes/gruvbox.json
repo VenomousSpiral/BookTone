@@ -1,0 +1,32 @@
+{
+    "name": "Gruvbox Dark",
+    "description": "Warm retro Gruvbox with earthy reds, yellows, and greens",
+    "variables": {
+        "--bg-primary": "#282828",
+        "--bg-secondary": "#32302f",
+        "--bg-tertiary": "#3c3836",
+        "--text-primary": "#ebdbb2",
+        "--text-secondary": "#a89984",
+        "--accent": "#eb9373",
+        "--accent-hover": "#ea6962",
+        "--border": "#504945",
+        "--success": "#98971a",
+        "--error": "#cc241d",
+        "--warning": "#d79921",
+        "--primary-color": "#eb9373",
+        "--primary-color-dark": "#ea6962",
+        "--primary-color-light": "rgba(235, 147, 115, 0.15)",
+        "--modal-overlay": "rgba(40, 40, 40, 0.85)",
+        "--image-overlay": "rgba(40, 40, 40, 0.9)",
+        "--toast-bg": "rgba(50, 48, 47, 0.9)",
+        "--toast-text": "#ebdbb2",
+        "--scrollbar-track": "#32302f",
+        "--scrollbar-thumb": "#3c3836",
+        "--hover-bg": "#3c3836",
+        "--shadow-color": "rgba(0, 0, 0, 0.3)",
+        "--info-toast-bg": "rgba(235, 219, 178, 0.95)",
+        "--info-toast-text": "#282828",
+        "--success-toast-bg": "rgba(152, 151, 26, 0.95)",
+        "--error-toast-bg": "rgba(204, 36, 29, 0.95)"
+    }
+}

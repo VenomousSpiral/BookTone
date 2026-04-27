@@ -1,0 +1,32 @@
+{
+    "name": "Forest",
+    "description": "Earthy greens and warm browns inspired by nature",
+    "variables": {
+        "--bg-primary": "#1a2e1a",
+        "--bg-secondary": "#243524",
+        "--bg-tertiary": "#2e402e",
+        "--text-primary": "#c8dbbe",
+        "--text-secondary": "#8fa88f",
+        "--accent": "#7bc47e",
+        "--accent-hover": "#5fb060",
+        "--border": "#3a5040",
+        "--success": "#90c47a",
+        "--error": "#d46a6a",
+        "--warning": "#d4a843",
+        "--primary-color": "#7bc47e",
+        "--primary-color-dark": "#5fb060",
+        "--primary-color-light": "rgba(123, 196, 126, 0.15)",
+        "--modal-overlay": "rgba(26, 46, 26, 0.85)",
+        "--image-overlay": "rgba(26, 46, 26, 0.9)",
+        "--toast-bg": "rgba(36, 53, 36, 0.9)",
+        "--toast-text": "#c8dbbe",
+        "--scrollbar-track": "#243524",
+        "--scrollbar-thumb": "#2e402e",
+        "--hover-bg": "#2e402e",
+        "--shadow-color": "rgba(0, 0, 0, 0.4)",
+        "--info-toast-bg": "rgba(123, 196, 126, 0.95)",
+        "--info-toast-text": "#1a2e1a",
+        "--success-toast-bg": "rgba(144, 196, 122, 0.95)",
+        "--error-toast-bg": "rgba(212, 106, 106, 0.95)"
+    }
+}

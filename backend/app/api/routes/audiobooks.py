@@ -3,7 +3,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from typing import List, Optional
 from pydantic import BaseModel
 from app.models.audiobook import (
-    AudiobookMetadata, 
+    AudiobookMetadata,
     GenerateAudiobookRequest,
     GenerationStatus
 )
@@ -12,9 +12,32 @@ from app.core.config import settings
 from pathlib import Path
 import json
 import shutil
+import os
 
 router = APIRouter()
 audio_generator = AudioGenerator()
+
+# Themes directory
+THEMES_DIR = settings.BASE_DIR / "frontend" / "static" / "themes"
+
+@router.get("/themes")
+async def list_themes():
+    """Dynamically discover and list all available themes"""
+    themes = []
+    if THEMES_DIR.exists():
+        for f in sorted(THEMES_DIR.iterdir()):
+            if f.suffix == ".json":
+                try:
+                    with open(f, "r") as fh:
+                        theme = json.load(fh)
+                    themes.append({
+                        "id": f.stem,
+                        "name": theme.get("name", f.stem),
+                        "description": theme.get("description", "")
+                    })
+                except Exception:
+                    pass
+    return themes
 
 # In-memory storage for audiobook metadata (you can replace with a database)
 audiobooks_db = {}

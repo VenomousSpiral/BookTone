@@ -1,0 +1,32 @@
+{
+    "name": "Dracula",
+    "description": "Vampire-dark with vivid purple, pink, and green accents",
+    "variables": {
+        "--bg-primary": "#282a36",
+        "--bg-secondary": "#343744",
+        "--bg-tertiary": "#44475a",
+        "--text-primary": "#f8f8f2",
+        "--text-secondary": "#bd97f6",
+        "--accent": "#bd93f9",
+        "--accent-hover": "#caa9fa",
+        "--border": "#6272a4",
+        "--success": "#50fa7b",
+        "--error": "#ff5555",
+        "--warning": "#f1fa8c",
+        "--primary-color": "#bd93f9",
+        "--primary-color-dark": "#a57eeb",
+        "--primary-color-light": "rgba(189, 147, 249, 0.15)",
+        "--modal-overlay": "rgba(40, 42, 54, 0.85)",
+        "--image-overlay": "rgba(40, 42, 54, 0.9)",
+        "--toast-bg": "rgba(52, 55, 68, 0.9)",
+        "--toast-text": "#f8f8f2",
+        "--scrollbar-track": "#343744",
+        "--scrollbar-thumb": "#44475a",
+        "--hover-bg": "#44475a",
+        "--shadow-color": "rgba(0, 0, 0, 0.3)",
+        "--info-toast-bg": "rgba(189, 147, 249, 0.95)",
+        "--info-toast-text": "#282a36",
+        "--success-toast-bg": "rgba(80, 250, 123, 0.95)",
+        "--error-toast-bg": "rgba(255, 85, 85, 0.95)"
+    }
+}

@@ -1,0 +1,32 @@
+{
+    "name": "Amber",
+    "description": "Warm amber CRT terminal inspired by vintage monitors",
+    "variables": {
+        "--bg-primary": "#1a1200",
+        "--bg-secondary": "#2a1f00",
+        "--bg-tertiary": "#3a2f00",
+        "--text-primary": "#ffb000",
+        "--text-secondary": "#cc8c00",
+        "--accent": "#ffaa00",
+        "--accent-hover": "#ffbb33",
+        "--border": "#3a2f00",
+        "--success": "#00ff88",
+        "--error": "#ff4444",
+        "--warning": "#ffcc00",
+        "--primary-color": "#ffaa00",
+        "--primary-color-dark": "#cc8800",
+        "--primary-color-light": "rgba(255, 170, 0, 0.15)",
+        "--modal-overlay": "rgba(26, 18, 0, 0.9)",
+        "--image-overlay": "rgba(26, 18, 0, 0.95)",
+        "--toast-bg": "rgba(42, 31, 0, 0.9)",
+        "--toast-text": "#ffb000",
+        "--scrollbar-track": "#2a1f00",
+        "--scrollbar-thumb": "#3a2f00",
+        "--hover-bg": "#3a2f00",
+        "--shadow-color": "rgba(255, 170, 0, 0.1)",
+        "--info-toast-bg": "rgba(255, 170, 0, 0.95)",
+        "--info-toast-text": "#1a1200",
+        "--success-toast-bg": "rgba(0, 255, 136, 0.95)",
+        "--error-toast-bg": "rgba(255, 68, 68, 0.95)"
+    }
+}

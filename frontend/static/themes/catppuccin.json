@@ -1,0 +1,32 @@
+{
+    "name": "Catppuccin Mocha",
+    "description": "Soft, cozy palette from the Catppuccin community",
+    "variables": {
+        "--bg-primary": "#1e1e2e",
+        "--bg-secondary": "#282838",
+        "--bg-tertiary": "#313244",
+        "--text-primary": "#cdd6f4",
+        "--text-secondary": "#a6adc8",
+        "--accent": "#cba6f7",
+        "--accent-hover": "#b4befe",
+        "--border": "#45475a",
+        "--success": "#a6e3a1",
+        "--error": "#f38ba8",
+        "--warning": "#f9e2af",
+        "--primary-color": "#cba6f7",
+        "--primary-color-dark": "#b4befe",
+        "--primary-color-light": "rgba(203, 166, 247, 0.15)",
+        "--modal-overlay": "rgba(30, 30, 46, 0.85)",
+        "--image-overlay": "rgba(30, 30, 46, 0.9)",
+        "--toast-bg": "rgba(40, 40, 56, 0.9)",
+        "--toast-text": "#cdd6f4",
+        "--scrollbar-track": "#282838",
+        "--scrollbar-thumb": "#313244",
+        "--hover-bg": "#313244",
+        "--shadow-color": "rgba(0, 0, 0, 0.3)",
+        "--info-toast-bg": "rgba(203, 166, 247, 0.95)",
+        "--info-toast-text": "#1e1e2e",
+        "--success-toast-bg": "rgba(166, 227, 161, 0.95)",
+        "--error-toast-bg": "rgba(243, 139, 168, 0.95)"
+    }
+}

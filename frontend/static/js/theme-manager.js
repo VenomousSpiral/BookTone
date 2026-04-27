@@ -5,17 +5,20 @@ const ThemeManager = {
     _themeCache: {},
 
     async init() {
-        // Load all theme definitions once
-        const themeNames = ['default', 'vscode-dark', 'secrets'];
-        for (const name of themeNames) {
-            try {
-                const response = await fetch(`${this.THEMES_DIR}/${name}.json`);
-                if (response.ok) {
-                    this._themeCache[name] = await response.json();
+        // Fetch theme list from server, then load each theme's JSON
+        try {
+            const resp = await fetch('/api/audiobooks/themes');
+            if (resp.ok) {
+                const themes = await resp.json();
+                for (const theme of themes) {
+                    const response = await fetch(`${this.THEMES_DIR}/${theme.id}.json`);
+                    if (response.ok) {
+                        this._themeCache[theme.id] = await response.json();
+                    }
                 }
-            } catch (e) {
-                console.warn(`[Theme] Failed to load theme: ${name}`);
             }
+        } catch (e) {
+            console.warn('[Theme] Failed to fetch theme list:', e);
         }
 
         // Populate all theme selector dropdowns

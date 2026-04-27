@@ -1,0 +1,32 @@
+{
+    "name": "Nord",
+    "description": "Arctic cold palette with icy blues and muted tones",
+    "variables": {
+        "--bg-primary": "#2e3440",
+        "--bg-secondary": "#3b4252",
+        "--bg-tertiary": "#434c5e",
+        "--text-primary": "#eceff4",
+        "--text-secondary": "#d8dee9",
+        "--accent": "#88c0d0",
+        "--accent-hover": "#8fbcbb",
+        "--border": "#4c566a",
+        "--success": "#a3be8c",
+        "--error": "#bf616a",
+        "--warning": "#ebcb8b",
+        "--primary-color": "#88c0d0",
+        "--primary-color-dark": "#6e9ab5",
+        "--primary-color-light": "rgba(136, 192, 208, 0.15)",
+        "--modal-overlay": "rgba(46, 52, 64, 0.85)",
+        "--image-overlay": "rgba(46, 52, 64, 0.9)",
+        "--toast-bg": "rgba(59, 66, 82, 0.9)",
+        "--toast-text": "#eceff4",
+        "--scrollbar-track": "#3b4252",
+        "--scrollbar-thumb": "#434c5e",
+        "--hover-bg": "#434c5e",
+        "--shadow-color": "rgba(0, 0, 0, 0.3)",
+        "--info-toast-bg": "rgba(136, 192, 208, 0.95)",
+        "--info-toast-text": "#2e3440",
+        "--success-toast-bg": "rgba(163, 190, 140, 0.95)",
+        "--error-toast-bg": "rgba(191, 97, 106, 0.95)"
+    }
+}

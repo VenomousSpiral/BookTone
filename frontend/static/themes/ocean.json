@@ -1,0 +1,32 @@
+{
+    "name": "Ocean",
+    "description": "Deep blue ocean-inspired dark theme",
+    "variables": {
+        "--bg-primary": "#0a192f",
+        "--bg-secondary": "#112240",
+        "--bg-tertiary": "#1d3557",
+        "--text-primary": "#ccd6f6",
+        "--text-secondary": "#8892b0",
+        "--accent": "#64ffda",
+        "--accent-hover": "#4fd1b5",
+        "--border": "#233554",
+        "--success": "#64ffda",
+        "--error": "#ff6b6b",
+        "--warning": "#ffd166",
+        "--primary-color": "#64ffda",
+        "--primary-color-dark": "#4fd1b5",
+        "--primary-color-light": "rgba(100, 255, 218, 0.15)",
+        "--modal-overlay": "rgba(10, 25, 47, 0.9)",
+        "--image-overlay": "rgba(10, 25, 47, 0.95)",
+        "--toast-bg": "rgba(17, 34, 64, 0.9)",
+        "--toast-text": "#ccd6f6",
+        "--scrollbar-track": "#112240",
+        "--scrollbar-thumb": "#233554",
+        "--hover-bg": "#1d3557",
+        "--shadow-color": "rgba(0, 0, 0, 0.4)",
+        "--info-toast-bg": "rgba(100, 255, 218, 0.95)",
+        "--info-toast-text": "#0a192f",
+        "--success-toast-bg": "rgba(100, 255, 218, 0.95)",
+        "--error-toast-bg": "rgba(255, 107, 107, 0.95)"
+    }
+}

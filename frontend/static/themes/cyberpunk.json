@@ -1,0 +1,32 @@
+{
+    "name": "Cyberpunk",
+    "description": "Neon-drenched dystopian palette with electric yellow and hot pink",
+    "variables": {
+        "--bg-primary": "#0d0221",
+        "--bg-secondary": "#150734",
+        "--bg-tertiary": "#1c0d47",
+        "--text-primary": "#f0f0f0",
+        "--text-secondary": "#a8a8ff",
+        "--accent": "#f9f022",
+        "--accent-hover": "#fff066",
+        "--border": "#2a1a5e",
+        "--success": "#00ff41",
+        "--error": "#ff003c",
+        "--warning": "#ff0090",
+        "--primary-color": "#f9f022",
+        "--primary-color-dark": "#ccbd00",
+        "--primary-color-light": "rgba(249, 240, 34, 0.15)",
+        "--modal-overlay": "rgba(13, 2, 33, 0.9)",
+        "--image-overlay": "rgba(13, 2, 33, 0.95)",
+        "--toast-bg": "rgba(21, 7, 52, 0.9)",
+        "--toast-text": "#f0f0f0",
+        "--scrollbar-track": "#150734",
+        "--scrollbar-thumb": "#1c0d47",
+        "--hover-bg": "#1c0d47",
+        "--shadow-color": "rgba(249, 240, 34, 0.15)",
+        "--info-toast-bg": "rgba(249, 240, 34, 0.95)",
+        "--info-toast-text": "#0d0221",
+        "--success-toast-bg": "rgba(0, 255, 65, 0.95)",
+        "--error-toast-bg": "rgba(255, 0, 60, 0.95)"
+    }
+}

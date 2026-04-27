@@ -1,0 +1,32 @@
+{
+    "name": "Sakura",
+    "description": "Soft cherry blossom pastel with gentle pinks and whites",
+    "variables": {
+        "--bg-primary": "#fff0f5",
+        "--bg-secondary": "#ffe4ed",
+        "--bg-tertiary": "#ffd6e3",
+        "--text-primary": "#4a3040",
+        "--text-secondary": "#7a6070",
+        "--accent": "#e8799b",
+        "--accent-hover": "#d45d83",
+        "--border": "#f0c0d0",
+        "--success": "#7cb990",
+        "--error": "#d45060",
+        "--warning": "#e8a84c",
+        "--primary-color": "#e8799b",
+        "--primary-color-dark": "#d45d83",
+        "--primary-color-light": "rgba(232, 121, 155, 0.15)",
+        "--modal-overlay": "rgba(74, 48, 64, 0.4)",
+        "--image-overlay": "rgba(255, 240, 245, 0.95)",
+        "--toast-bg": "rgba(232, 121, 155, 0.9)",
+        "--toast-text": "#4a3040",
+        "--scrollbar-track": "#ffe4ed",
+        "--scrollbar-thumb": "#f0c0d0",
+        "--hover-bg": "#ffd6e3",
+        "--shadow-color": "rgba(232, 121, 155, 0.15)",
+        "--info-toast-bg": "rgba(255, 240, 245, 0.95)",
+        "--info-toast-text": "#4a3040",
+        "--success-toast-bg": "rgba(124, 185, 144, 0.95)",
+        "--error-toast-bg": "rgba(212, 80, 96, 0.95)"
+    }
+}
