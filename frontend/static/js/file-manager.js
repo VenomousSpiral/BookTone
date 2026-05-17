@@ -492,8 +492,66 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// ========== CREATE TEXT FILE ==========
+function showCreateTextFileModal() {
+    const modal = document.getElementById('createTextFileModal');
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+    document.getElementById('newTextFileName').value = '';
+    document.getElementById('newTextFileContent').value = '';
+    document.getElementById('newTextFileName').focus();
+}
+
+function closeCreateTextFileModal() {
+    const modal = document.getElementById('createTextFileModal');
+    modal.style.display = 'none';
+    modal.classList.remove('active');
+}
+
+async function handleCreateTextFile(e) {
+    e.preventDefault();
+
+    let filename = document.getElementById('newTextFileName').value.trim();
+    const content = document.getElementById('newTextFileContent').value;
+
+    if (!filename) {
+        alert('Please enter a filename.');
+        return;
+    }
+
+    // Auto-append .txt if no extension
+    if (!filename.includes('.')) {
+        filename += '.txt';
+    }
+
+    const path = fileState.current ? `${fileState.current}/${filename}` : filename;
+
+    try {
+        await apiCall('/files/create-file', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, content })
+        });
+        closeCreateTextFileModal();
+        await refreshFiles();
+    } catch (error) {
+        console.error('Create text file error:', error);
+        alert(`Error creating file: ${error.message}`);
+    }
+}
+
 // ========== GLOBAL EXPORTS ==========
 window.createDirectory = createDirectory;
 window.toggleFileSettingsMenu = toggleFileSettingsMenu;
 window.closeAllFileSettingsMenus = closeAllFileSettingsMenus;
 window.openStreamMode = openStreamMode;
+window.showCreateTextFileModal = showCreateTextFileModal;
+window.closeCreateTextFileModal = closeCreateTextFileModal;
+
+// Bind form submit
+document.addEventListener('DOMContentLoaded', () => {
+    const form = document.getElementById('createTextFileForm');
+    if (form) {
+        form.addEventListener('submit', handleCreateTextFile);
+    }
+});

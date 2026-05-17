@@ -25,6 +25,7 @@
                     📤 Upload Ebook
                 </button>
                 <button onclick="createDirectory()" class="btn">📁 New Folder</button>
+                <button onclick="showCreateTextFileModal()" class="btn">📝 New Text File</button>
             </div>
             
             <div class="breadcrumb" id="breadcrumb"></div>
@@ -356,6 +357,25 @@
 
     <!-- Move Menu Modal -->
     <div id="moveMenu" class="modal"></div>
+
+    <!-- Modal for Create Text File -->
+    <div id="createTextFileModal" class="modal">
+        <div class="modal-content" style="max-width: 600px;">
+            <h2>📝 New Text File</h2>
+            <form id="createTextFileForm">
+                <label for="newTextFileName">Filename (e.g., my-notes.txt):</label>
+                <input type="text" id="newTextFileName" required placeholder="filename.txt" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+
+                <label for="newTextFileContent">Content:</label>
+                <textarea id="newTextFileContent" rows="15" placeholder="Paste or type your text here..." style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; font-size: inherit; resize: vertical;"></textarea>
+
+                <div class="modal-buttons">
+                    <button type="submit" class="btn btn-primary">Create File</button>
+                    <button type="button" onclick="closeCreateTextFileModal()" class="btn">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <script src="/static/js/theme-manager.js?v=1"></script>
     <script src="/static/js/app.js?v=21"></script>
