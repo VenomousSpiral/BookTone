@@ -1,6 +1,11 @@
 // Main application logic
 const API_BASE = '/api';
 
+// ========== NO-OP LOGGING (F-1) ==========
+const _log = () => {};  // no-op for console.log
+const _warn = () => {}; // no-op for console.warn
+// KEEP console.error(...) — these are for real errors only
+
 // ========== CONSOLIDATED STATE ==========
 const appState = {
     models: {},
@@ -73,7 +78,7 @@ async function trackAsRecentlyRead(audiobookId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(prefs)
         });
-        console.log(`[TRACKING] Marked as recently read: ${audiobookId}`);
+        _log(`[TRACKING] Marked as recently read: ${audiobookId}`);
     } catch (error) {
         console.error('[TRACKING] Failed to track as recently read:', error);
     }
@@ -82,9 +87,9 @@ async function trackAsRecentlyRead(audiobookId) {
 // ========== API HELPER ==========
 async function apiCall(endpoint, options = {}) {
     try {
-        console.log('API Call:', endpoint, options);
+        _log('API Call:', endpoint, options);
         const response = await fetch(API_BASE + endpoint, options);
-        console.log('API Response status:', response.status);
+        _log('API Response status:', response.status);
 
         if (!response.ok) {
             let errorMessage = 'API request failed';
@@ -99,7 +104,7 @@ async function apiCall(endpoint, options = {}) {
         }
 
         const data = await response.json();
-        console.log('API Response data:', data);
+        _log('API Response data:', data);
         return data;
     } catch (error) {
         console.error('API Error:', error);
@@ -288,7 +293,7 @@ async function deleteModel(modelName) {
 async function refreshAudiobooks() {
     const container = document.getElementById('audiobookList');
     const prevScroll = container.scrollTop;
-    console.log('[Audiobook] Scroll position before refresh:', prevScroll);
+    _log('[Audiobook] Scroll position before refresh:', prevScroll);
 
     // Save which settings menus are currently open
     const openMenus = [];
@@ -307,7 +312,7 @@ async function refreshAudiobooks() {
 
         setTimeout(() => {
             container.scrollTop = prevScroll;
-            console.log('[Audiobook] Scroll position after refresh:', container.scrollTop);
+            _log('[Audiobook] Scroll position after refresh:', container.scrollTop);
 
             // Restore open settings menus
             openMenus.forEach(menuId => {
@@ -342,7 +347,7 @@ async function sortAudiobooks() {
             const prefs = await apiCall('/audiobooks/preferences/get');
             filtered = applySortToAudiobooks(filtered, sortBy, prefs);
         } catch (error) {
-            console.log('No preferences found yet, using alphabetical order');
+            _log('No preferences found yet, using alphabetical order');
             filtered = applySortToAudiobooks(filtered, 'name');
         }
     } else {

@@ -2,6 +2,7 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 from pathlib import Path
 
@@ -13,6 +14,9 @@ app = FastAPI(
     description="Upload ebooks and convert them to audiobooks with LRC support",
     version="0.1.0"
 )
+
+# GZip compression middleware (compresses responses >1KB)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS middleware
 app.add_middleware(

@@ -13,6 +13,7 @@ from app.services.stream_service import StreamService
 from app.core.config import settings
 
 _logger = logging.getLogger("ebook_parser")
+_stream_logger = logging.getLogger(__name__)
 
 router = APIRouter()
 stream_service = StreamService()
@@ -229,7 +230,7 @@ async def generate_audio(request: StreamAudioRequest):
     """
     import time
     request_start = time.time()
-    print(f"[AUDIO] Request received: chars {request.start_char}-{request.end_char}, model={request.model}, voice={request.voice}")
+    _stream_logger.debug("[AUDIO] Request received: chars %d-%d, model=%s, voice=%s", request.start_char, request.end_char, request.model, request.voice)
     
     try:
         # Get text segment
@@ -240,7 +241,7 @@ async def generate_audio(request: StreamAudioRequest):
             request.end_char
         )
         text_time = time.time() - text_start
-        print(f"[AUDIO] Text extraction took {text_time*1000:.0f}ms, length={len(text)} chars")
+        _stream_logger.debug("[AUDIO] Text extraction took %dms, length=%d chars", text_time*1000, len(text))
         
         if not text.strip():
             raise HTTPException(status_code=400, detail="Text segment is empty")
@@ -257,8 +258,8 @@ async def generate_audio(request: StreamAudioRequest):
         )
         gen_time = time.time() - gen_start
         total_time = time.time() - request_start
-        print(f"[AUDIO] TTS generation took {gen_time*1000:.0f}ms, audio size={len(audio_data)} bytes")
-        print(f"[AUDIO] Total request time: {total_time*1000:.0f}ms")
+        _stream_logger.debug("[AUDIO] TTS generation took %dms, audio size=%d bytes", gen_time*1000, len(audio_data))
+        _stream_logger.debug("[AUDIO] Total request time: %dms", total_time*1000)
         
         # Return as streaming response
         return Response(
@@ -273,7 +274,7 @@ async def generate_audio(request: StreamAudioRequest):
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        print(f"[ERROR] Audio generation failed: {e}")
+        _stream_logger.error("[ERROR] Audio generation failed: %s", e)
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

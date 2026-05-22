@@ -13,9 +13,21 @@ from pathlib import Path
 import json
 import shutil
 import os
+from pydantic import BaseModel
 
 router = APIRouter()
 audio_generator = AudioGenerator()
+
+# Lightweight summary for list endpoint (B-4)
+class AudiobookSummary(BaseModel):
+    id: str
+    title: str
+    status: str
+    progress: float
+    modified: int
+    is_directory: bool
+    total_chunks: int = 0
+    completed_chunks: int = 0
 
 # Themes directory
 THEMES_DIR = settings.BASE_DIR / "frontend" / "static" / "themes"
@@ -54,7 +66,7 @@ def load_audiobooks_db():
                 for audiobook_id, audiobook_data in data.items():
                     audiobooks_db[audiobook_id] = AudiobookMetadata(**audiobook_data)
         except Exception as e:
-            print(f"[ERROR] Failed to load audiobooks database: {e}")
+            logger.error("[ERROR] Failed to load audiobooks database: %s", e)
 
 def save_audiobooks_db():
     """Save audiobooks database to disk"""
@@ -65,7 +77,7 @@ def save_audiobooks_db():
         with open(AUDIOBOOKS_DB_FILE, 'w') as f:
             json.dump(data, f, indent=2, default=str)
     except Exception as e:
-        print(f"[ERROR] Failed to save audiobooks database: {e}")
+        logger.error("[ERROR] Failed to save audiobooks database: %s", e)
 
 # Load existing data on startup
 load_audiobooks_db()
@@ -139,7 +151,7 @@ def load_user_preferences():
             with open(USER_PREFS_FILE, 'r') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Error loading user preferences: {e}")
+            logger.error("Error loading user preferences: %s", e)
     return {
         "font_size": "16",
         "font_family": "system",
@@ -161,23 +173,23 @@ def save_user_preferences(prefs: dict):
         with open(USER_PREFS_FILE, 'w') as f:
             json.dump(prefs, f, indent=2)
     except Exception as e:
-        print(f"Error saving user preferences: {e}")
+        logger.error("Error saving user preferences: %s", e)
 
 @router.get("/preferences/get")
 async def get_user_preferences():
     """Get user preferences"""
     if settings.DEBUG:
-        print("[PREFERENCES] GET /preferences/get called")
+        logger.debug("[PREFERENCES] GET /preferences/get called")
     prefs = load_user_preferences()
     if settings.DEBUG:
-        print(f"[PREFERENCES] Returning preferences: {prefs}")
+        logger.debug("[PREFERENCES] Returning preferences: %s", prefs)
     return prefs
 
 @router.post("/preferences/save")
 async def save_preferences(prefs: UserPreferences):
     """Save user preferences"""
     if settings.DEBUG:
-        print(f"[PREFERENCES] POST /preferences/save called with: {prefs}")
+        logger.debug("[PREFERENCES] POST /preferences/save called with: %s", prefs)
     # Load existing preferences to preserve audiobooks tracking data
     existing_prefs = load_user_preferences()
     
@@ -191,7 +203,7 @@ async def save_preferences(prefs: UserPreferences):
     
     save_user_preferences(prefs_dict)
     if settings.DEBUG:
-        print(f"[PREFERENCES] Saved preferences (with preserved audiobooks data): {prefs_dict}")
+        logger.debug("[PREFERENCES] Saved preferences (with preserved audiobooks data): %s", prefs_dict)
     return {"message": "Preferences saved", "preferences": prefs_dict}
 
 class TrackingRequest(BaseModel):
@@ -212,8 +224,7 @@ async def track_playback(request: TrackingRequest):
         save_user_preferences(prefs)
         return {"message": "tracked"}
     except Exception as e:
-        if settings.DEBUG:
-            print(f"[TRACKING] Error: {e}")
+        logger.error("[TRACKING] Error: %s", e)
         return {"message": "error"}, 500
 
 
@@ -229,7 +240,7 @@ class MoveItemRequest(BaseModel):
 
 @router.get("/list")
 async def list_audiobooks_with_folders(path: str = ""):
-    """List audiobooks and folders in a specific path"""
+    """List audiobooks and folders in a specific path (B-4: returns summaries only)"""
     audiobooks_dir = settings.AUDIOBOOKS_DIR
     current_path = audiobooks_dir / path if path else audiobooks_dir
     
@@ -250,13 +261,18 @@ async def list_audiobooks_with_folders(path: str = ""):
                 rel_path = str(item.relative_to(audiobooks_dir))
                 
                 if rel_path in audiobooks_db:
-                    # It's an audiobook
+                    # It's an audiobook - return lightweight summary only (B-4)
                     audiobook = audiobooks_db[rel_path]
-                    items.append({
-                        **audiobook.model_dump(),
-                        "is_directory": False,
-                        "modified": item.stat().st_mtime
-                    })
+                    items.append(AudiobookSummary(
+                        id=rel_path,
+                        title=audiobook.title,
+                        status=audiobook.status,
+                        progress=audiobook.progress,
+                        modified=int(item.stat().st_mtime),
+                        is_directory=False,
+                        total_chunks=audiobook.total_chunks,
+                        completed_chunks=audiobook.completed_chunks
+                    ).model_dump())
                 else:
                     # It's a regular folder for organization
                     items.append({
@@ -270,7 +286,7 @@ async def list_audiobooks_with_folders(path: str = ""):
                         "voice": None
                     })
     except Exception as e:
-        print(f"[ERROR] Error listing audiobooks: {e}")
+        logger.error("[ERROR] Error listing audiobooks: %s", e)
     
     return items
 
@@ -757,7 +773,7 @@ def combine_audiobook_chunks(audiobook_id: str):
                 concat_file.write(f"file '{escaped_path}'\n")
                 valid_chunks += 1
             else:
-                print(f"[DOWNLOAD] Warning: chunk file not found: {chunk_path}")
+                logger.warning("[DOWNLOAD] Warning: chunk file not found: %s", chunk_path)
             
             # Update progress
             if i % 100 == 0:  # Update every 100 chunks to avoid too many updates
@@ -770,7 +786,7 @@ def combine_audiobook_chunks(audiobook_id: str):
         
         concat_file.close()
         
-        print(f"[DOWNLOAD] Concat file written with {valid_chunks} valid chunks")
+        logger.info("[DOWNLOAD] Concat file written with %d valid chunks", valid_chunks)
         
         if valid_chunks == 0:
             download_progress[audiobook_id] = {"status": "error", "error": "No audio chunk files found"}
@@ -779,7 +795,7 @@ def combine_audiobook_chunks(audiobook_id: str):
         # Debug: print first few lines of concat file
         with open(concat_file.name, 'r') as f:
             first_lines = f.readlines()[:3]
-            print(f"[DOWNLOAD] Concat file first lines: {first_lines}")
+            logger.debug("[DOWNLOAD] Concat file first lines: %s", first_lines)
         
         download_progress[audiobook_id].update({
             "progress": 15,
@@ -804,8 +820,8 @@ def combine_audiobook_chunks(audiobook_id: str):
             temp_output
         ]
         
-        print(f"[DOWNLOAD] Running ffmpeg command: {' '.join(cmd)}")
-        print(f"[DOWNLOAD] Concat file: {concat_file.name}")
+        logger.info("[DOWNLOAD] Running ffmpeg command: %s", ' '.join(cmd))
+        logger.info("[DOWNLOAD] Concat file: %s", concat_file.name)
         
         # Run ffmpeg
         process = subprocess.Popen(
@@ -834,7 +850,7 @@ def combine_audiobook_chunks(audiobook_id: str):
         
         # Log any warnings but don't fail if file was created successfully
         if stderr_text:
-            print(f"[DOWNLOAD] ffmpeg stderr (may be warnings): {stderr_text[:500]}")
+            logger.debug("[DOWNLOAD] ffmpeg stderr (may be warnings): %s", stderr_text[:500])
         
         # Move temp file to final location
         download_progress[audiobook_id].update({
@@ -985,9 +1001,9 @@ async def download_audiobook(audiobook_id: str):
 @router.get("/{audiobook_id:path}", response_model=AudiobookMetadata)
 async def get_audiobook(audiobook_id: str):
     """Get audiobook metadata by ID"""
-    print(f"[CATCH-ALL] GET /{{audiobook_id:path}} called with: {audiobook_id}")
-    print(f"[CATCH-ALL] Available audiobooks: {list(audiobooks_db.keys())}")
+    logger.debug("[CATCH-ALL] GET /{audiobook_id:path} called with: %s", audiobook_id)
+    logger.debug("[CATCH-ALL] Available audiobooks: %s", list(audiobooks_db.keys()))
     if audiobook_id not in audiobooks_db:
-        print(f"[CATCH-ALL] ERROR: Audiobook not found: {audiobook_id}")
+        logger.error("[CATCH-ALL] ERROR: Audiobook not found: %s", audiobook_id)
         raise HTTPException(status_code=404, detail=f"Audiobook not found: {audiobook_id}")
     return audiobooks_db[audiobook_id]

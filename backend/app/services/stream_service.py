@@ -10,10 +10,13 @@ from datetime import datetime
 from openai import OpenAI
 import httpx
 import io
+import logging
 
 from app.services.ebook_parser import EbookParser
 from app.core.config import settings
 from app.models.streaming import StreamProgress
+
+logger = logging.getLogger(__name__)
 
 
 class StreamChapter:
@@ -118,9 +121,9 @@ class StreamService:
                     data = json.load(f)
                     for ebook_path, progress_data in data.items():
                         self._progress_db[ebook_path] = StreamProgress(**progress_data)
-                print(f"[DEBUG] Loaded {len(self._progress_db)} streaming progress records")
+                logger.debug("[DEBUG] Loaded %d streaming progress records", len(self._progress_db))
             except Exception as e:
-                print(f"[ERROR] Failed to load streaming progress: {e}")
+                logger.error("[ERROR] Failed to load streaming progress: %s", e)
     
     def _save_progress_db(self):
         """Save streaming progress database to disk"""
@@ -131,7 +134,7 @@ class StreamService:
             with open(self.progress_file, 'w') as f:
                 json.dump(data, f, indent=2, default=str)
         except Exception as e:
-            print(f"[ERROR] Failed to save streaming progress: {e}")
+            logger.error("[ERROR] Failed to save streaming progress: %s", e)
             raise
     
     def get_progress(self, ebook_path: str) -> StreamProgress:
@@ -182,7 +185,7 @@ class StreamService:
                 with open(self.settings_file, 'r') as f:
                     return json.load(f)
             except Exception as e:
-                print(f"[ERROR] Failed to load stream settings: {e}")
+                logger.error("[ERROR] Failed to load stream settings: %s", e)
         
         # Return defaults
         return {
@@ -206,7 +209,7 @@ class StreamService:
             with open(self.settings_file, 'w') as f:
                 json.dump(settings_data, f, indent=2)
         except Exception as e:
-            print(f"[ERROR] Failed to save stream settings: {e}")
+            logger.error("[ERROR] Failed to save stream settings: %s", e)
             raise
     
     def _compute_ebook_hash(self, ebook_path: Path) -> str:
@@ -221,7 +224,7 @@ class StreamService:
                 return cached_hash
         
         # Compute new hash
-        print(f"[DEBUG] Computing hash for {ebook_path}...")
+        logger.debug("[DEBUG] Computing hash for %s...", ebook_path)
         hash_md5 = hashlib.md5()
         with open(ebook_path, "rb") as f:
             for chunk in iter(lambda: f.read(4096), b""):
@@ -292,7 +295,7 @@ class StreamService:
                 models = json.load(f)
                 return models.get(model_name)
         except Exception as e:
-            print(f"[ERROR] Failed to load model config: {e}")
+            logger.error("[ERROR] Failed to load model config: %s", e)
             return None
     
     def _get_openai_client(self, model_config: Optional[Dict]) -> OpenAI:
@@ -371,7 +374,7 @@ class StreamService:
         cache_dir = self._get_stream_cache_dir(ebook_path, model, voice)
         audio_file = cache_dir / f"audio_{start_char}_{end_char}.mp3"
         if audio_file.exists():
-            print(f"[STREAM CACHE] Found cached audio for chars {start_char}-{end_char}: {audio_file}")
+            logger.debug("[STREAM CACHE] Found cached audio for chars %d-%d: %s", start_char, end_char, audio_file)
             return audio_file.read_bytes()
         return None
 
@@ -414,13 +417,13 @@ class StreamService:
         Returns audio data as bytes (MP3)
         Optionally saves to stream cache if save_stream_audio setting is enabled.
         """
-        print(f"[DEBUG] Generating audio - model: {model}, voice: {voice}, text length: {len(text)}")
+        logger.debug("[DEBUG] Generating audio - model: %s, voice: %s, text length: %d", model, voice, len(text))
         
         # Check if we have cached stream audio for this char range
         if ebook_path and start_char is not None and end_char is not None:
             cached_audio = self.get_cached_stream_audio_by_chars(ebook_path, start_char, end_char, model, voice)
             if cached_audio:
-                print(f"[DEBUG] Returning cached stream audio for chars {start_char}-{end_char}")
+                logger.debug("[DEBUG] Returning cached stream audio for chars %d-%d", start_char, end_char)
                 return cached_audio
         
         # Get model config
@@ -432,7 +435,7 @@ class StreamService:
         if text_scrub_chars:
             original_len = len(text)
             text = self._scrub_text(text, text_scrub_chars)
-            print(f"[DEBUG] Text scrubbed: {original_len} -> {len(text)} chars (removed: {text_scrub_chars})")
+            logger.debug("[DEBUG] Text scrubbed: %d -> %d chars (removed: %s)", original_len, len(text), text_scrub_chars)
         
         # Create client
         client = self._get_openai_client(model_config)
@@ -447,7 +450,7 @@ class StreamService:
             
             # Read audio data
             audio_data = response.read()
-            print(f"[DEBUG] Generated audio: {len(audio_data)} bytes")
+            logger.debug("[DEBUG] Generated audio: %d bytes", len(audio_data))
             
             # Save to stream cache if setting is enabled and we have char range info
             if ebook_path and start_char is not None and end_char is not None:
@@ -458,14 +461,14 @@ class StreamService:
                         cache_dir.mkdir(parents=True, exist_ok=True)
                         audio_file = cache_dir / f"audio_{start_char}_{end_char}.mp3"
                         audio_file.write_bytes(audio_data)
-                        print(f"[STREAM CACHE] Saved audio for chars {start_char}-{end_char}: {audio_file}")
+                        logger.debug("[STREAM CACHE] Saved audio for chars %d-%d: %s", start_char, end_char, audio_file)
                     except Exception as e:
-                        print(f"[STREAM CACHE ERROR] Failed to save audio: {e}")
+                        logger.error("[STREAM CACHE ERROR] Failed to save audio: %s", e)
             
             return audio_data
             
         except Exception as e:
-            print(f"[ERROR] TTS generation failed: {e}")
+            logger.error("[ERROR] TTS generation failed: %s", e)
             raise
     
     def get_text_segment(

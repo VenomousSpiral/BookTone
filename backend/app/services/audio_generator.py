@@ -8,6 +8,7 @@ from openai import OpenAI
 import httpx
 from pydub import AudioSegment
 import json
+import logging
 
 from app.models.audiobook import AudiobookMetadata, GenerationStatus, ChapterInfo, AudioChunk
 from app.services.ebook_parser import EbookParser
@@ -15,6 +16,8 @@ from app.services.lrc_generator import LRCGenerator
 from app.core.config import settings
 import re
 import os
+
+logger = logging.getLogger(__name__)
 
 # Configuration for audio chunking
 TEXT_CHUNKS_PER_AUDIO_FILE = 10  # Save audio file every 10 text chunks for faster playback availability
@@ -85,7 +88,7 @@ class AudioGenerator:
         save_callback: Optional function to call to persist database changes
         """
         try:
-            print(f"[DEBUG] Starting generation for audiobook {audiobook_id}")
+            logger.debug("[DEBUG] Starting generation for audiobook %s", audiobook_id)
             audiobook = audiobooks_db[audiobook_id]
             audiobook.status = GenerationStatus.IN_PROGRESS
             audiobook.updated_at = datetime.now()
@@ -95,22 +98,22 @@ class AudioGenerator:
             audiobook_dir.mkdir(parents=True, exist_ok=True)
             
             # Parse ebook
-            print(f"[DEBUG] Parsing ebook: {audiobook.source_file}")
+            logger.debug("[DEBUG] Parsing ebook: %s", audiobook.source_file)
             ebook_path = Path(audiobook.source_file)
             if not ebook_path.exists():
                 full_path = settings.EBOOKS_DIR / audiobook.source_file
                 if not full_path.exists():
                     raise FileNotFoundError(f"Ebook not found: {audiobook.source_file}")
                 ebook_path = full_path
-            print(f"[DEBUG] Ebook path resolved to: {ebook_path}")
+            logger.debug("[DEBUG] Ebook path resolved to: %s", ebook_path)
             
             # Check if ebook has changed
             current_hash = self._compute_ebook_hash(ebook_path)
             ebook_changed = audiobook.ebook_hash and audiobook.ebook_hash != current_hash
             
             if ebook_changed:
-                print(f"[DEBUG] Ebook has been updated! Old hash: {audiobook.ebook_hash}, New hash: {current_hash}")
-                print(f"[DEBUG] Continuing generation from chunk {audiobook.completed_chunks}")
+                logger.debug("[DEBUG] Ebook has been updated! Old hash: %s, New hash: %s", audiobook.ebook_hash, current_hash)
+                logger.debug("[DEBUG] Continuing generation from chunk %s", audiobook.completed_chunks)
             
             audiobook.ebook_hash = current_hash
             
@@ -141,21 +144,21 @@ class AudioGenerator:
                 })
             
             audiobook.total_chunks = len(all_text_chunks)
-            print(f"[DEBUG] Total text chunks to generate: {len(all_text_chunks)}")
-            print(f"[DEBUG] Will create ~{(len(all_text_chunks) + TEXT_CHUNKS_PER_AUDIO_FILE - 1) // TEXT_CHUNKS_PER_AUDIO_FILE} audio files")
-            print(f"[DEBUG] Found {len(chapter_info)} chapters")
+            logger.debug("[DEBUG] Total text chunks to generate: %d", len(all_text_chunks))
+            logger.debug("[DEBUG] Will create ~%d audio files", (len(all_text_chunks) + TEXT_CHUNKS_PER_AUDIO_FILE - 1) // TEXT_CHUNKS_PER_AUDIO_FILE)
+            logger.debug("[DEBUG] Found %d chapters", len(chapter_info))
             
             # Get model config
             model_config = self._get_model_config(audiobook.model)
-            print(f"[DEBUG] Model config: {model_config}")
+            logger.debug("[DEBUG] Model config: %s", model_config)
             
             # Get actual API model name
             api_model = model_config.get('api_model', audiobook.model) if model_config else audiobook.model
-            print(f"[DEBUG] API model to use: {api_model}")
+            logger.debug("[DEBUG] API model to use: %s", api_model)
             
             # Initialize OpenAI client
             client = self._get_openai_client(model_config)
-            print(f"[DEBUG] OpenAI client created")
+            logger.debug("[DEBUG] OpenAI client created")
             
             # Check for cached stream audio
             from app.services.stream_service import StreamService
@@ -199,9 +202,9 @@ class AudioGenerator:
                     
                     if stream_chunk_map:
                         total_covered = len(stream_chunk_map) + len(stream_chunk_skip)
-                        print(f"[DEBUG] Stream cache covers {total_covered}/{len(all_text_chunks)} text chunks ({len(stream_cache_files)} cached audio files)")
+                        logger.debug("[DEBUG] Stream cache covers %d/%d text chunks (%d cached audio files)", total_covered, len(all_text_chunks), len(stream_cache_files))
                 else:
-                    print(f"[DEBUG] Stream cache exists but no matching model/voice directory: {audiobook.model}_{audiobook.voice}")
+                    logger.debug("[DEBUG] Stream cache exists but no matching model/voice directory: %s_%s", audiobook.model, audiobook.voice)
             
             # Load existing data if resuming
             lrc_lines = []
@@ -209,7 +212,7 @@ class AudioGenerator:
             cumulative_time = 0.0
             
             if audiobook.completed_chunks > 0:
-                print(f"[DEBUG] Resuming from text chunk {audiobook.completed_chunks + 1}")
+                logger.debug("[DEBUG] Resuming from text chunk %d", audiobook.completed_chunks + 1)
                 start_chunk = audiobook.completed_chunks
                 cumulative_time = audiobook.total_duration
                 
@@ -217,7 +220,7 @@ class AudioGenerator:
                 lrc_path = Path(audiobook.lrc_file) if audiobook.lrc_file else None
                 if lrc_path and lrc_path.exists():
                     lrc_lines = self.lrc_generator.load_lrc(lrc_path)
-                    print(f"[DEBUG] Loaded {len(lrc_lines)} existing LRC lines")
+                    logger.debug("[DEBUG] Loaded %d existing LRC lines", len(lrc_lines))
             
             # Pre-compute estimated durations for skipped (grouped) stream cache chunks
             stream_skip_durations = {}  # chunk_index -> estimated_duration
@@ -253,7 +256,7 @@ class AudioGenerator:
                         # Update map entry with pre-loaded data
                         stream_chunk_map[group_leader] = (cached_path, cached_audio, total_dur, group)
                     except Exception as e:
-                        print(f"[DEBUG] Failed to pre-process stream cache for chunk {group_leader}: {e}")
+                        logger.debug("[DEBUG] Failed to pre-process stream cache for chunk %s: %s", group_leader, e)
                         failed_leaders.append(group_leader)
                 
                 # Clean up failed entries
@@ -271,14 +274,14 @@ class AudioGenerator:
                 
                 # Check if paused
                 if audiobook.status == GenerationStatus.PAUSED:
-                    print(f"[DEBUG] Generation paused at chunk {i+1}/{len(all_text_chunks)}")
+                    logger.debug("[DEBUG] Generation paused at chunk %d/%d", i+1, len(all_text_chunks))
                     break
                 
-                print(f"[DEBUG] Processing text chunk {i+1}/{len(all_text_chunks)}")
+                logger.debug("[DEBUG] Processing text chunk %d/%d", i+1, len(all_text_chunks))
                 
                 # Skip chunks that are only punctuation/whitespace (can't generate audio)
                 if not self._is_valid_text_chunk(text_chunk):
-                    print(f"[DEBUG] Skipping text chunk {i+1} - no speakable content: {text_chunk[:50]}...")
+                    logger.debug("[DEBUG] Skipping text chunk %d - no speakable content: %s...", i+1, text_chunk[:50])
                     lrc_lines.append({
                         'timestamp': cumulative_time,
                         'text': text_chunk
@@ -292,7 +295,7 @@ class AudioGenerator:
                 # Check if this chunk is a non-leader in a stream cache group (skip generation)
                 if i in stream_chunk_skip:
                     est_duration = stream_skip_durations.get(i, 0)
-                    print(f"[DEBUG] Text chunk {i+1} covered by stream cache (skip, est duration: {est_duration:.2f}s)")
+                    logger.debug("[DEBUG] Text chunk %d covered by stream cache (skip, est duration: %.2fs)", i+1, est_duration)
                     lrc_lines.append({
                         'timestamp': cumulative_time,
                         'text': text_chunk
@@ -312,7 +315,7 @@ class AudioGenerator:
                 if cache_entry and isinstance(cache_entry, tuple):
                     cached_path, audio_segment, total_dur, group = cache_entry
                     duration = stream_skip_durations.get(i, total_dur)
-                    print(f"[DEBUG] Using cached stream audio for text chunk {i+1} (group of {len(group)}, total: {total_dur:.2f}s)")
+                    logger.debug("[DEBUG] Using cached stream audio for text chunk %d (group of %d, total: %.2fs)", i+1, len(group), total_dur)
                 else:
                     # Generate audio for chunk via TTS
                     audio_segment, duration = self._generate_audio_chunk(
@@ -322,7 +325,7 @@ class AudioGenerator:
                         text_chunk
                     )
                 
-                print(f"[DEBUG] Text chunk {i+1} ready, duration: {duration:.2f}s")
+                logger.debug("[DEBUG] Text chunk %d ready, duration: %.2fs", i+1, duration)
                 
                 current_audio_segments.append(audio_segment)
                 
@@ -354,7 +357,7 @@ class AudioGenerator:
                     audio_chunk_filename = f"chunk_{audio_chunk_index:04d}.mp3"
                     audio_chunk_path = audiobook_dir / audio_chunk_filename
                     
-                    print(f"[DEBUG] Saving audio file chunk {audio_chunk_index} at text chunk {i+1}/{len(all_text_chunks)}")
+                    logger.debug("[DEBUG] Saving audio file chunk %d at text chunk %d/%d", audio_chunk_index, i+1, len(all_text_chunks))
                     
                     # Combine segments for this audio file
                     combined_audio = sum(current_audio_segments)
@@ -406,7 +409,7 @@ class AudioGenerator:
                     current_audio_segments = []
                     current_audio_chunk_start = i + 1
                     
-                    print(f"[DEBUG] Audio file chunk {audio_chunk_index} saved successfully")
+                    logger.debug("[DEBUG] Audio file chunk %d saved successfully", audio_chunk_index)
             
             # Build chapter metadata with accurate timestamps from LRC
             audiobook.chapters = []
@@ -430,9 +433,9 @@ class AudioGenerator:
             if audiobook.completed_chunks == audiobook.total_chunks:
                 audiobook.status = GenerationStatus.COMPLETED
                 audiobook.progress = 1.0
-                print(f"[DEBUG] Audiobook generation completed!")
+                logger.debug("[DEBUG] Audiobook generation completed!")
             else:
-                print(f"[DEBUG] Audiobook generation paused at {audiobook.completed_chunks}/{audiobook.total_chunks}")
+                logger.debug("[DEBUG] Audiobook generation paused at %d/%d", audiobook.completed_chunks, audiobook.total_chunks)
             
             audiobook.updated_at = datetime.now()
             
@@ -441,7 +444,7 @@ class AudioGenerator:
                 save_callback()
                 
         except Exception as e:
-            print(f"[ERROR] Generation failed: {str(e)}")
+            logger.error("[ERROR] Generation failed: %s", str(e))
             import traceback
             traceback.print_exc()
             
@@ -504,7 +507,7 @@ class AudioGenerator:
         try:
             # Ensure chunk_index is an integer
             chunk_index = int(chunk_index)
-            print(f"[REGENERATE] Starting regeneration of chunk {chunk_index} for audiobook {audiobook_id}")
+            logger.debug("[REGENERATE] Starting regeneration of chunk %s for audiobook %s", chunk_index, audiobook_id)
             audiobook = audiobooks_db[audiobook_id]
             
             # Get the chunk metadata
@@ -525,7 +528,7 @@ class AudioGenerator:
             start_text = int(chunk.start_text_chunk)
             end_text = int(chunk.end_text_chunk)
             
-            print(f"[REGENERATE] Regenerating text chunks {start_text}-{end_text}")
+            logger.debug("[REGENERATE] Regenerating text chunks %s-%s", start_text, end_text)
             
             # Get model config
             models_file = settings.STORAGE_DIR / "models.json"
@@ -546,11 +549,11 @@ class AudioGenerator:
                 if i >= len(all_text_chunks):
                     break
                 text_chunk = all_text_chunks[i]
-                print(f"[REGENERATE] Generating text chunk {i+1}/{end_text+1}")
+                logger.debug("[REGENERATE] Generating text chunk %d/%d", i+1, end_text+1)
                 
                 # Skip chunks that are only punctuation/whitespace
                 if not self._is_valid_text_chunk(text_chunk):
-                    print(f"[REGENERATE] Skipping text chunk {i+1} - no speakable content")
+                    logger.debug("[REGENERATE] Skipping text chunk %d - no speakable content", i+1)
                     continue
                 
                 audio_segment, duration = self._generate_audio_chunk(
@@ -613,7 +616,7 @@ class AudioGenerator:
                     
                     # Save updated LRC
                     self.lrc_generator.save_lrc(lrc_lines, lrc_path)
-                    print(f"[REGENERATE] Updated LRC timestamps (shifted by {duration_diff:.2f}s)")
+                    logger.debug("[REGENERATE] Updated LRC timestamps (shifted by %.2fs)", duration_diff)
             
             audiobook.status = GenerationStatus.COMPLETED
             audiobook.updated_at = datetime.now()
@@ -622,15 +625,15 @@ class AudioGenerator:
             combined_download_path = audiobook_dir / "combined_download.mp3"
             if combined_download_path.exists():
                 combined_download_path.unlink()
-                print(f"[REGENERATE] Deleted cached combined download file")
+                logger.debug("[REGENERATE] Deleted cached combined download file")
             
             if save_callback:
                 save_callback()
             
-            print(f"[REGENERATE] Successfully regenerated chunk {chunk_index}")
+            logger.debug("[REGENERATE] Successfully regenerated chunk %s", chunk_index)
             
         except Exception as e:
-            print(f"[REGENERATE ERROR] Failed to regenerate chunk {chunk_index}: {str(e)}")
+            logger.error("[REGENERATE ERROR] Failed to regenerate chunk %s: %s", chunk_index, str(e))
             import traceback
             traceback.print_exc()
             audiobook = audiobooks_db[audiobook_id]
@@ -651,14 +654,14 @@ class AudioGenerator:
         temp_file = settings.AUDIOBOOKS_DIR / f"temp_{uuid.uuid4()}.mp3"
         
         try:
-            print(f"[DEBUG] Calling TTS API - model: {model}, voice: {voice}, text length: {len(text)}")
-            print(f"[DEBUG] Client base_url: {client.base_url}")
+            logger.debug("[DEBUG] Calling TTS API - model: %s, voice: %s, text length: %d", model, voice, len(text))
+            logger.debug("[DEBUG] Client base_url: %s", client.base_url)
             response = client.audio.speech.create(
                 model=model,
                 voice=voice,
                 input=text
             )
-            print(f"[DEBUG] TTS API response received")
+            logger.debug("[DEBUG] TTS API response received")
             
             response.stream_to_file(str(temp_file))
             
@@ -690,8 +693,8 @@ class AudioGenerator:
             append_from_chunk: The chunk index where we should start appending
         """
         try:
-            print(f"[APPEND] Starting append for audiobook {audiobook_id}")
-            print(f"[APPEND] Will append new content after chunk {append_from_chunk}")
+            logger.debug("[APPEND] Starting append for audiobook %s", audiobook_id)
+            logger.debug("[APPEND] Will append new content after chunk %s", append_from_chunk)
             
             audiobook = audiobooks_db[audiobook_id]
             audiobook.status = GenerationStatus.IN_PROGRESS
@@ -702,7 +705,7 @@ class AudioGenerator:
             audiobook_dir.mkdir(parents=True, exist_ok=True)
             
             # Parse the NEW ebook
-            print(f"[APPEND] Parsing new ebook: {audiobook.source_file}")
+            logger.debug("[APPEND] Parsing new ebook: %s", audiobook.source_file)
             ebook_path = Path(audiobook.source_file)
             if not ebook_path.exists():
                 full_path = settings.EBOOKS_DIR / audiobook.source_file
@@ -736,7 +739,7 @@ class AudioGenerator:
                     'chunk_count': len(text_chunks)
                 })
             
-            print(f"[APPEND] New content has {len(new_text_chunks)} chunks across {len(new_chapter_info)} chapters")
+            logger.debug("[APPEND] New content has %d chunks across %d chapters", len(new_text_chunks), len(new_chapter_info))
             
             # Update total chunks to include both old and new
             audiobook.total_chunks = existing_chunks_count + len(new_text_chunks)
@@ -747,11 +750,11 @@ class AudioGenerator:
                 lrc_path = Path(audiobook.lrc_file)
                 if lrc_path.exists():
                     lrc_lines = self.lrc_generator.load_lrc(lrc_path)
-                    print(f"[APPEND] Loaded {len(lrc_lines)} existing LRC lines")
+                    logger.debug("[APPEND] Loaded %d existing LRC lines", len(lrc_lines))
             
             # Get cumulative time from existing content
             cumulative_time = audiobook.total_duration
-            print(f"[APPEND] Starting append at cumulative time: {cumulative_time:.2f}s")
+            logger.debug("[APPEND] Starting append at cumulative time: %.2fs", cumulative_time)
             
             # Get model config and create client
             model_config = self._get_model_config(audiobook.model)
@@ -768,14 +771,14 @@ class AudioGenerator:
                 global_chunk_index = existing_chunks_count + i
                 
                 if audiobook.status == GenerationStatus.PAUSED:
-                    print(f"[APPEND] Generation paused at chunk {global_chunk_index}")
+                    logger.debug("[APPEND] Generation paused at chunk %s", global_chunk_index)
                     break
                 
-                print(f"[APPEND] Processing chunk {i + 1}/{len(new_text_chunks)} (global: {global_chunk_index})")
+                logger.debug("[APPEND] Processing chunk %d/%d (global: %s)", i + 1, len(new_text_chunks), global_chunk_index)
                 
                 # Skip non-speakable chunks
                 if not self._is_valid_text_chunk(text_chunk):
-                    print(f"[APPEND] Skipping chunk {i + 1} - no speakable content")
+                    logger.debug("[APPEND] Skipping chunk %d - no speakable content", i + 1)
                     lrc_lines.append({
                         'timestamp': cumulative_time,
                         'text': text_chunk
@@ -818,7 +821,7 @@ class AudioGenerator:
                     audio_chunk_filename = f"chunk_{audio_chunk_index:04d}.mp3"
                     audio_chunk_path = audiobook_dir / audio_chunk_filename
                     
-                    print(f"[APPEND] Saving audio chunk {audio_chunk_index}")
+                    logger.debug("[APPEND] Saving audio chunk %s", audio_chunk_index)
                     
                     combined_audio = sum(current_audio_segments)
                     temp_path = audiobook_dir / f"temp_{audio_chunk_filename}"
@@ -873,20 +876,20 @@ class AudioGenerator:
             if audiobook.completed_chunks == audiobook.total_chunks:
                 audiobook.status = GenerationStatus.COMPLETED
                 audiobook.progress = 1.0
-                print(f"[APPEND] Audiobook append completed!")
+                logger.debug("[APPEND] Audiobook append completed!")
             
             # Delete cached combined download
             combined_download = audiobook_dir / "combined_download.mp3"
             if combined_download.exists():
                 combined_download.unlink()
-                print(f"[APPEND] Deleted cached combined download")
+                logger.debug("[APPEND] Deleted cached combined download")
             
             audiobook.updated_at = datetime.now()
             if save_callback:
                 save_callback()
                 
         except Exception as e:
-            print(f"[APPEND ERROR] Failed: {str(e)}")
+            logger.error("[APPEND ERROR] Failed: %s", str(e))
             import traceback
             traceback.print_exc()
             

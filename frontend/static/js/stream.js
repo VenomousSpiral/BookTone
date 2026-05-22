@@ -1,6 +1,11 @@
 // Streaming mode JavaScript
 const API_BASE = '/api';
 
+// ========== NO-OP LOGGING (F-1) ==========
+const _log = () => {};  // no-op for console.log
+const _warn = () => {}; // no-op for console.warn
+// KEEP console.error(...) — these are for real errors only
+
 // ========== STATE MANAGEMENT ==========
 const state = {
     book: null,
@@ -73,8 +78,8 @@ const DOM = {
 };
 
 // ========== UTILITY FUNCTIONS ==========
-const log = (msg, data = '') => console.log(`[STREAM] ${msg}`, data);
-const logCache = (msg, data = '') => console.log(`[STREAM CACHE] ${msg}`, data);
+const log = (msg, data = '') => _log(`[STREAM] ${msg}`, data);
+const logCache = (msg, data = '') => _log(`[STREAM CACHE] ${msg}`, data);
 const logError = (msg, err) => console.error(`[STREAM] ${msg}:`, err);
 
 const formatTime = (seconds) => {
@@ -108,7 +113,7 @@ const hideAudioStatus = () => {
 
 // Skip audio generation and stop playback
 function skipAudioGeneration() {
-    console.log('[STREAM] User skipped audio generation');
+    _log('[STREAM] User skipped audio generation');
     // Set flag to ignore error events during user-initiated stop
     state.isUserStopping = true;
     // Abort all in-flight requests
@@ -153,7 +158,7 @@ window.onclick = (e) => {
 // ========== INITIALIZATION ==========
 document.addEventListener('DOMContentLoaded', async () => {
     log('Initializing with ebook:', EBOOK_PATH);
-    trackFilePlayback(EBOOK_PATH).catch(err => console.warn('[TRACKING] Skipped:', err.message));
+    trackFilePlayback(EBOOK_PATH).catch(err => _warn('[TRACKING] Skipped:', err.message));
 
     await Promise.all([loadSettings(), loadModels(), loadProgress()]);
     await parseBook();
@@ -221,7 +226,7 @@ async function parseBook() {
 }
 
 async function loadAllChunks() {
-    console.log('[STREAM] Loading text chunks on-demand...');
+    _log('[STREAM] Loading text chunks on-demand...');
 
     DOM.textDisplay.innerHTML = '';
 
@@ -238,7 +243,7 @@ async function loadAllChunks() {
     // Also keep scroll handler for edge-case DOM expansion
     DOM.textDisplay.addEventListener('scroll', handleScroll);
 
-    console.log('[STREAM] Initial chunks created');
+    _log('[STREAM] Initial chunks created');
     updateProgress();
 }
 
@@ -473,7 +478,7 @@ async function loadChunksAround(centerChunk, radius = 25) {
     const startChunk = Math.max(0, centerChunk - radius);
     const endChunk = Math.min(state.book.chunks.length - 1, centerChunk + radius);
 
-    console.log(`[STREAM] Loading chunks ${startChunk} to ${endChunk} around chunk ${centerChunk}`);
+    _log(`[STREAM] Loading chunks ${startChunk} to ${endChunk} around chunk ${centerChunk}`);
 
     const textDisplay = DOM.textDisplay;
     let scrollAnchorIndex = null;
@@ -641,7 +646,7 @@ function showImageModal(imageUrl) {
 async function loadAndJumpToChunk(chunkIndex) {
     // Prevent multiple simultaneous jump operations
     if (state.isJumping) {
-        console.log('[STREAM] Already jumping, ignoring click');
+        _log('[STREAM] Already jumping, ignoring click');
         return;
     }
     state.isJumping = true;
@@ -649,7 +654,7 @@ async function loadAndJumpToChunk(chunkIndex) {
     // Safety timeout - reset flag after 10 seconds in case something hangs
     const safetyTimeout = setTimeout(() => {
         if (state.isJumping) {
-            console.warn('[STREAM] isJumping flag stuck, resetting');
+            _warn('[STREAM] isJumping flag stuck, resetting');
             state.isJumping = false;
         }
     }, 10000);
@@ -671,7 +676,7 @@ function setupAudioPlayer() {
     audio.addEventListener('error', async (e) => {
         // Ignore errors during user-initiated stops (e.g., skip button)
         if (state.isUserStopping) {
-            console.log('[STREAM] Ignoring audio error during user-initiated stop');
+            _log('[STREAM] Ignoring audio error during user-initiated stop');
             return;
         }
         
@@ -785,7 +790,7 @@ async function handleChunkTransition() {
             // Don't transition if the audio doesn't match the current chunk
             // (e.g., old audio finishing after a jump)
             if (state.currentAudioSegment?.chunkIndex !== state.currentChunk) {
-                console.log('[STREAM] Ignoring transition - audio chunk mismatch');
+                _log('[STREAM] Ignoring transition - audio chunk mismatch');
                 return;
             }
 
@@ -856,7 +861,7 @@ async function playNextSegment(shouldPlay = false) {
 
     // Prevent multiple concurrent calls to playNextSegment
     if (state.isGeneratingAudio) {
-        console.log('[STREAM] Already generating audio, skipping duplicate call');
+        _log('[STREAM] Already generating audio, skipping duplicate call');
         return;
     }
 
@@ -1047,7 +1052,7 @@ function prefetchAudio(startChunkIndex, count = CACHE.SIZE) {
 async function jumpToChunk(chunkIndex) {
     if (chunkIndex < 0 || chunkIndex >= state.book.total_chunks) return;
 
-    console.log('[STREAM] Jumping to chunk:', chunkIndex);
+    _log('[STREAM] Jumping to chunk:', chunkIndex);
 
     state.audioPlaybackId++;
     const thisPlaybackId = state.audioPlaybackId;
@@ -1120,19 +1125,19 @@ function isElementPartiallyVisible(el) {
 async function scrollToCurrentChunk() {
     state.autoScrollEnabled = true;
 
-    console.log(`[STREAM] Scrolling to current chunk ${state.currentChunk}`);
+    _log(`[STREAM] Scrolling to current chunk ${state.currentChunk}`);
 
     // Check if chunk exists in DOM
     let currentChunk = document.querySelector(`.chunk-container[data-chunk-index="${state.currentChunk}"]`);
     
     if (!currentChunk) {
         // Chunk not in DOM, need to load it with surrounding chunks
-        console.log(`[STREAM] Chunk ${state.currentChunk} not in DOM, loading chunks around it`);
+        _log(`[STREAM] Chunk ${state.currentChunk} not in DOM, loading chunks around it`);
         await loadChunksAround(state.currentChunk, LOAD.RADIUS);
         currentChunk = document.querySelector(`.chunk-container[data-chunk-index="${state.currentChunk}"]`);
         
         if (!currentChunk) {
-            console.warn(`[STREAM] Chunk ${state.currentChunk} still not in DOM after loading`);
+            _warn(`[STREAM] Chunk ${state.currentChunk} still not in DOM after loading`);
             return;
         }
     }
@@ -1229,7 +1234,7 @@ async function seekToPosition(percent) {
 
     targetChunk = Math.max(0, Math.min(targetChunk, state.book.total_chunks - 1));
 
-    console.log('[STREAM] Seeking to chunk:', targetChunk);
+    _log('[STREAM] Seeking to chunk:', targetChunk);
 
     await jumpToChunk(targetChunk);
 }

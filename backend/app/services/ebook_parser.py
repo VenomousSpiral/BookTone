@@ -378,7 +378,7 @@ class EbookParser:
                                             # For now, skip FlateDecode images as they need reconstruction
                                             pass
                                 except Exception as img_err:
-                                    print(f"[DEBUG] Could not extract image from PDF page {i}: {img_err}")
+                                    _logger.debug("[DEBUG] Could not extract image from PDF page %d: %s", i, img_err)
                 except Exception as page_err:
                     # Page doesn't have images or couldn't be processed
                     pass

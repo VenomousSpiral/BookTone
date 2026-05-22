@@ -1,5 +1,10 @@
 // Audio player management
 
+// ========== NO-OP LOGGING (F-1) ==========
+const _log = () => {};  // no-op for console.log
+const _warn = () => {}; // no-op for console.warn
+// KEEP console.error(...) — these are for real errors only
+
 // ========== STATE MANAGEMENT ==========
 const state = {
     audiobook: {
@@ -119,7 +124,7 @@ const isElementPartiallyVisible = (el) => {
 // ========== PLAYBACK TRACKING ==========
 async function trackAudiobookPlayed(audiobookPath) {
     try {
-        console.log('[TRACKING] Starting tracking for:', audiobookPath);
+        _log('[TRACKING] Starting tracking for:', audiobookPath);
         const prefs = await apiCall('/audiobooks/preferences/get');
         if (!prefs.audiobooks) prefs.audiobooks = {};
         prefs.audiobooks[audiobookPath] = { last_played: Date.now() };
@@ -129,7 +134,7 @@ async function trackAudiobookPlayed(audiobookPath) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(prefs)
         });
-        console.log(`[TRACKING] Successfully recorded play time for: ${audiobookPath}`);
+        _log(`[TRACKING] Successfully recorded play time for: ${audiobookPath}`);
     } catch (error) {
         console.error('[TRACKING] Failed to track audiobook play:', error);
     }
@@ -138,10 +143,10 @@ async function trackAudiobookPlayed(audiobookPath) {
 // ========== CHUNK MANAGEMENT ==========
 async function loadAudioChunk(audiobookId, chunkIndex, useCache = true, retryCount = 0) {
     const MAX_RETRIES = 3;
-    console.log(`[CHUNK] Loading chunk ${chunkIndex} (useCache: ${useCache}, attempt: ${retryCount + 1})`);
+    _log(`[CHUNK] Loading chunk ${chunkIndex} (useCache: ${useCache}, attempt: ${retryCount + 1})`);
 
     if (useCache && state.cache.chunks.has(chunkIndex)) {
-        console.log(`[CHUNK CACHE] Hit for chunk ${chunkIndex}`);
+        _log(`[CHUNK CACHE] Hit for chunk ${chunkIndex}`);
         return URL.createObjectURL(state.cache.chunks.get(chunkIndex));
     }
 
@@ -158,18 +163,18 @@ async function loadAudioChunk(audiobookId, chunkIndex, useCache = true, retryCou
 
         const blob = await response.blob();
         state.cache.chunks.set(chunkIndex, blob);
-        console.log(`[CHUNK CACHE] Stored chunk ${chunkIndex}, cache size: ${state.cache.chunks.size}`);
+        _log(`[CHUNK CACHE] Stored chunk ${chunkIndex}, cache size: ${state.cache.chunks.size}`);
 
         cleanupChunkCache(chunkIndex);
 
         const blobUrl = URL.createObjectURL(blob);
-        console.log(`[CHUNK] Created blob URL for chunk ${chunkIndex}:`, blobUrl);
+        _log(`[CHUNK] Created blob URL for chunk ${chunkIndex}:`, blobUrl);
         return blobUrl;
     } catch (error) {
         console.error(`[CHUNK] Failed to load chunk ${chunkIndex} (attempt ${retryCount + 1}):`, error);
         
         if (retryCount < MAX_RETRIES) {
-            console.log(`[CHUNK] Retrying chunk ${chunkIndex} in ${(retryCount + 1) * 500}ms...`);
+            _log(`[CHUNK] Retrying chunk ${chunkIndex} in ${(retryCount + 1) * 500}ms...`);
             await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 500));
             return loadAudioChunk(audiobookId, chunkIndex, useCache, retryCount + 1);
         }
@@ -184,7 +189,7 @@ function cleanupChunkCache(currentIndex) {
     for (const [index] of state.cache.chunks) {
         if (index < minKeep || index > maxKeep) {
             state.cache.chunks.delete(index);
-            console.log(`[CHUNK CACHE] Removed chunk ${index} from cache`);
+            _log(`[CHUNK CACHE] Removed chunk ${index} from cache`);
         }
     }
 }
@@ -193,7 +198,7 @@ async function preloadAdjacentChunks(centerIndex) {
     if (state.cache.preloadInProgress || !state.audiobook.id) return;
 
     state.cache.preloadInProgress = true;
-    console.log(`[CHUNK CACHE] Preloading chunks around ${centerIndex}`);
+    _log(`[CHUNK CACHE] Preloading chunks around ${centerIndex}`);
 
     try {
         const promises = [];
@@ -204,7 +209,7 @@ async function preloadAdjacentChunks(centerIndex) {
                 promises.push(
                     loadAudioChunk(state.audiobook.id, nextIndex, false)
                         .then(url => URL.revokeObjectURL(url))
-                        .catch(err => console.warn(`[CHUNK CACHE] Failed to preload chunk ${nextIndex}:`, err))
+                        .catch(err => _warn(`[CHUNK CACHE] Failed to preload chunk ${nextIndex}:`, err))
                 );
             }
         }
@@ -215,25 +220,25 @@ async function preloadAdjacentChunks(centerIndex) {
                 promises.push(
                     loadAudioChunk(state.audiobook.id, prevIndex, false)
                         .then(url => URL.revokeObjectURL(url))
-                        .catch(err => console.warn(`[CHUNK CACHE] Failed to preload chunk ${prevIndex}:`, err))
+                        .catch(err => _warn(`[CHUNK CACHE] Failed to preload chunk ${prevIndex}:`, err))
                 );
             }
         }
 
         await Promise.all(promises);
-        console.log(`[CHUNK CACHE] Preload complete, cache size: ${state.cache.chunks.size}`);
+        _log(`[CHUNK CACHE] Preload complete, cache size: ${state.cache.chunks.size}`);
     } finally {
         state.cache.preloadInProgress = false;
     }
 }
 
 async function loadAudioChunksMetadata(audiobookId) {
-    console.log('[CHUNKS] Loading chunks metadata');
+    _log('[CHUNKS] Loading chunks metadata');
     try {
         const data = await apiCall(`/audiobooks/${audiobookId}/chunks`);
         state.audiobook.chunks = data.chunks || [];
         state.audiobook.totalDuration = data.total_duration || 0;
-        console.log(`[CHUNKS] Loaded ${state.audiobook.chunks.length} chunks, total duration: ${state.audiobook.totalDuration}s`);
+        _log(`[CHUNKS] Loaded ${state.audiobook.chunks.length} chunks, total duration: ${state.audiobook.totalDuration}s`);
         return state.audiobook.chunks;
     } catch (error) {
         console.error('[CHUNKS] Failed to load chunks metadata:', error);
@@ -254,7 +259,7 @@ function getChunkForGlobalTime(globalTime) {
         // Check if globalTime is within chunk boundaries with tolerance
         if (globalTime >= chunk.start_time - EPSILON && globalTime <= chunkEnd + EPSILON) {
             const localTime = Math.max(0, globalTime - chunk.start_time);
-            console.log(`[CHUNK MAP] Global ${globalTime}s → Chunk ${i} (${chunk.start_time}s-${chunkEnd}s) at local ${localTime}s`);
+            _log(`[CHUNK MAP] Global ${globalTime}s → Chunk ${i} (${chunk.start_time}s-${chunkEnd}s) at local ${localTime}s`);
             return { chunkIndex: i, localTime: localTime };
         }
     }
@@ -265,7 +270,7 @@ function getChunkForGlobalTime(globalTime) {
 
         // If seeking beyond the last chunk, cap at the end of last chunk
         if (globalTime >= lastChunkEnd) {
-            console.log(`[CHUNK MAP] Global ${globalTime}s is beyond last chunk, capping at chunk ${state.audiobook.chunks.length - 1} end (${lastChunkEnd}s)`);
+            _log(`[CHUNK MAP] Global ${globalTime}s is beyond last chunk, capping at chunk ${state.audiobook.chunks.length - 1} end (${lastChunkEnd}s)`);
             return { chunkIndex: state.audiobook.chunks.length - 1, localTime: lastChunk.duration };
         }
 
@@ -288,7 +293,7 @@ function getChunkForGlobalTime(globalTime) {
         
         const chunk = state.audiobook.chunks[closestChunk];
         const localTime = Math.max(0, Math.min(chunk.duration, globalTime - chunk.start_time));
-        console.warn(`[CHUNK MAP] Global ${globalTime}s not found in any chunk, using closest chunk ${closestChunk} at local ${localTime}s`);
+        _warn(`[CHUNK MAP] Global ${globalTime}s not found in any chunk, using closest chunk ${closestChunk} at local ${localTime}s`);
         return { chunkIndex: closestChunk, localTime: localTime };
     }
 
@@ -306,19 +311,19 @@ async function switchToChunk(chunkIndex, seekTime = 0, forcePlayState = null, re
     const MAX_RETRIES = 3;
     
     if (state.playback.isTransitioning && retryCount === 0) {
-        console.log('[CHUNK] Already transitioning, ignoring request');
+        _log('[CHUNK] Already transitioning, ignoring request');
         return;
     }
 
     if (chunkIndex < 0 || chunkIndex >= state.audiobook.chunks.length) {
-        console.warn(`[CHUNK] Invalid chunk index: ${chunkIndex}`);
+        _warn(`[CHUNK] Invalid chunk index: ${chunkIndex}`);
         return;
     }
 
     const audioPlayer = DOM.player;
     const wasPlaying = forcePlayState !== null ? forcePlayState : !audioPlayer.paused;
 
-    console.log(`[CHUNK] Switching to chunk ${chunkIndex}, seek to ${seekTime}s, wasPlaying: ${wasPlaying}, attempt: ${retryCount + 1}`);
+    _log(`[CHUNK] Switching to chunk ${chunkIndex}, seek to ${seekTime}s, wasPlaying: ${wasPlaying}, attempt: ${retryCount + 1}`);
     state.playback.isTransitioning = true;
 
     try {
@@ -357,22 +362,22 @@ async function switchToChunk(chunkIndex, seekTime = 0, forcePlayState = null, re
         state.audiobook.currentChunk = chunkIndex;
 
         if (wasPlaying) {
-            console.log('[CHUNK] Resuming playback');
+            _log('[CHUNK] Resuming playback');
             await audioPlayer.play();
         } else {
-            console.log('[CHUNK] Not resuming (was paused)');
+            _log('[CHUNK] Not resuming (was paused)');
         }
 
         updatePlayPauseButton();
         preloadAdjacentChunks(chunkIndex);
 
-        console.log(`[CHUNK] Successfully switched to chunk ${chunkIndex} at ${seekTime}s`);
+        _log(`[CHUNK] Successfully switched to chunk ${chunkIndex} at ${seekTime}s`);
     } catch (error) {
         console.error(`[CHUNK] Failed to switch to chunk ${chunkIndex} (attempt ${retryCount + 1}):`, error);
         
         // Retry logic
         if (retryCount < MAX_RETRIES) {
-            console.log(`[CHUNK] Retrying switch to chunk ${chunkIndex} in ${(retryCount + 1) * 500}ms...`);
+            _log(`[CHUNK] Retrying switch to chunk ${chunkIndex} in ${(retryCount + 1) * 500}ms...`);
             state.playback.isTransitioning = false;
             
             // Clear the cached chunk in case it was corrupted
@@ -398,10 +403,10 @@ async function handleChunkTransition() {
         const nextChunkIndex = state.audiobook.currentChunk + 1;
 
         if (nextChunkIndex < state.audiobook.chunks.length) {
-            console.log(`[CHUNK] Near end of chunk ${state.audiobook.currentChunk}, transitioning to ${nextChunkIndex}, wasPlaying: ${state.playback.isPlaying}`);
+            _log(`[CHUNK] Near end of chunk ${state.audiobook.currentChunk}, transitioning to ${nextChunkIndex}, wasPlaying: ${state.playback.isPlaying}`);
             await switchToChunk(nextChunkIndex, 0, state.playback.isPlaying);
         } else {
-            console.log('[CHUNK] Reached end of last chunk');
+            _log('[CHUNK] Reached end of last chunk');
         }
     }
 }
@@ -419,7 +424,7 @@ async function loadLRC(audiobookId) {
         const lrcText = await response.text();
 
         state.lrc.fullData = parseLRC(lrcText);
-        console.log(`[LRC] Loaded ${state.lrc.fullData.length} total lines`);
+        _log(`[LRC] Loaded ${state.lrc.fullData.length} total lines`);
         loadLRCWindow(0);
     } catch (error) {
         console.error('Error loading LRC:', error);
@@ -523,7 +528,7 @@ function loadLRCWindow(globalTime) {
     }
 
     state.lrc.loadedRange = { start, end };
-    console.log(`[LRC] Updated loaded range: ${start}-${end} (currentIndex: ${currentIndex})`);
+    _log(`[LRC] Updated loaded range: ${start}-${end} (currentIndex: ${currentIndex})`);
 
     // Restore scroll position
     if (scrollAnchorIndex !== null) {
@@ -585,11 +590,11 @@ function createLRCLine(lineData, index) {
         if (e.target.classList.contains('lrc-image')) return;
         // Don't seek if long press was just triggered
         if (state.touch.longPressTriggered) {
-            console.log('[DEBUG] Ignoring click after long press');
+            _log('[DEBUG] Ignoring click after long press');
             state.touch.longPressTriggered = false;
             return;
         }
-        console.log(`[DEBUG] Lyric clicked: index=${index}, timestamp=${lineData.timestamp}`);
+        _log(`[DEBUG] Lyric clicked: index=${index}, timestamp=${lineData.timestamp}`);
         seekToTimestamp(lineData.timestamp);
     };
 
@@ -660,13 +665,13 @@ function showImageModal(imageUrl) {
 
 async function loadAudiobookImages(audiobookId) {
     try {
-        console.log('[IMAGES] Loading images for audiobook:', audiobookId);
+        _log('[IMAGES] Loading images for audiobook:', audiobookId);
         
         // First, get image metadata (which chunks have images)
         const metadata = await apiCall(`/audiobooks/${audiobookId}/images`);
         
         if (!metadata.has_images) {
-            console.log('[IMAGES] No images in this audiobook');
+            _log('[IMAGES] No images in this audiobook');
             state.images.chunkImages = [];
             return;
         }
@@ -681,7 +686,7 @@ async function loadAudiobookImages(audiobookId) {
             }
         }
         
-        console.log(`[IMAGES] Found ${imageIds.size} unique images across ${metadata.chunks.length} chunks`);
+        _log(`[IMAGES] Found ${imageIds.size} unique images across ${metadata.chunks.length} chunks`);
         
         // Load each image
         for (const imageId of imageIds) {
@@ -691,12 +696,12 @@ async function loadAudiobookImages(audiobookId) {
                     state.images.data[imageId] = imageData.data;
                 }
             } catch (err) {
-                console.warn(`[IMAGES] Failed to load image ${imageId}:`, err);
+                _warn(`[IMAGES] Failed to load image ${imageId}:`, err);
             }
         }
         
         state.images.loaded = true;
-        console.log('[IMAGES] All images loaded');
+        _log('[IMAGES] All images loaded');
         
         // Reload LRC to display images
         if (state.lrc.fullData.length > 0) {
@@ -767,13 +772,13 @@ function handleUserScroll() {
             const targetIndex = Math.max(0, firstLoaded - 100);
             targetTimestamp = state.lrc.fullData[targetIndex]?.timestamp || 0;
             shouldLoad = true;
-            console.log(`[LRC] Near top (${distanceFromTop}px), loading from index ${targetIndex}`);
+            _log(`[LRC] Near top (${distanceFromTop}px), loading from index ${targetIndex}`);
         } else if (distanceFromBottom < threshold && lastLoaded < state.lrc.fullData.length - 1) {
             // Near bottom - load later lines  
             const targetIndex = Math.min(state.lrc.fullData.length - 1, lastLoaded + 100);
             targetTimestamp = state.lrc.fullData[targetIndex]?.timestamp || 0;
             shouldLoad = true;
-            console.log(`[LRC] Near bottom (${distanceFromBottom}px), loading from index ${targetIndex}`);
+            _log(`[LRC] Near bottom (${distanceFromBottom}px), loading from index ${targetIndex}`);
         }
 
         if (shouldLoad) {
@@ -822,7 +827,7 @@ function scrollToCurrentLine() {
     setTimeout(() => {
         const activeLine = document.querySelector('.lrc-line.active');
         if (activeLine) {
-            console.log('[SCROLL] Found active line, scrolling to index:', activeLine.dataset.index);
+            _log('[SCROLL] Found active line, scrolling to index:', activeLine.dataset.index);
             state.scroll.auto = true; // Ensure auto flag is set right before scroll
             activeLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
             // Keep auto flag for a bit longer after scroll to prevent timer resets
@@ -830,12 +835,12 @@ function scrollToCurrentLine() {
                 state.scroll.auto = false;
             }, 500);
         } else {
-            console.warn('[SCROLL] No active line found after loading window');
+            _warn('[SCROLL] No active line found after loading window');
             updateLRCHighlight();
             setTimeout(() => {
                 const retryActiveLine = document.querySelector('.lrc-line.active');
                 if (retryActiveLine) {
-                    console.log('[SCROLL] Found active line on retry, scrolling');
+                    _log('[SCROLL] Found active line on retry, scrolling');
                     state.scroll.auto = true; // Ensure auto flag is set right before scroll
                     retryActiveLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     // Keep auto flag for a bit longer after scroll to prevent timer resets
@@ -887,13 +892,13 @@ function updateLRCHighlight() {
         const newStart = Math.max(0, currentIndexInFull - LRC_WINDOW_SIZE);
         const newEnd = Math.min(state.lrc.fullData.length, currentIndexInFull + LRC_WINDOW_SIZE);
 
-        console.log(`[LRC EDGE] current=${currentIndexInFull}, range=${state.lrc.loadedRange.start}-${state.lrc.loadedRange.end}, distStart=${distanceFromStart}, distEnd=${distanceFromEnd}`);
+        _log(`[LRC EDGE] current=${currentIndexInFull}, range=${state.lrc.loadedRange.start}-${state.lrc.loadedRange.end}, distStart=${distanceFromStart}, distEnd=${distanceFromEnd}`);
 
         // Only reload if near edge AND window range will change
         if (((distanceFromStart < EDGE_THRESHOLD && state.lrc.loadedRange.start > 0) ||
             (distanceFromEnd < EDGE_THRESHOLD && state.lrc.loadedRange.end < state.lrc.fullData.length)) &&
             (state.lrc.loadedRange.start !== newStart || state.lrc.loadedRange.end !== newEnd)) {
-            console.log(`[LRC] Near edge (${distanceFromStart} from start, ${distanceFromEnd} from end), loading new window`);
+            _log(`[LRC] Near edge (${distanceFromStart} from start, ${distanceFromEnd} from end), loading new window`);
             loadLRCWindow(currentTime);
         }
     }
@@ -1032,7 +1037,7 @@ async function playAudiobook(audiobookId) {
         }
 
         trackAudiobookPlayed(audiobookId).catch(err => {
-            console.warn('[TRACKING] Skipping tracking:', err.message);
+            _warn('[TRACKING] Skipping tracking:', err.message);
         });
 
         state.audiobook.id = audiobookId;
@@ -1045,7 +1050,7 @@ async function playAudiobook(audiobookId) {
             return;
         }
 
-        console.log(`[PLAYER] Using chunked audio system with ${state.audiobook.chunks.length} chunks`);
+        _log(`[PLAYER] Using chunked audio system with ${state.audiobook.chunks.length} chunks`);
 
         let startChunkIndex = 0;
         let startLocalTime = 0;
@@ -1054,7 +1059,7 @@ async function playAudiobook(audiobookId) {
             const chunkInfo = getChunkForGlobalTime(audiobook.last_position);
             startChunkIndex = chunkInfo.chunkIndex;
             startLocalTime = chunkInfo.localTime;
-            console.log(`[PLAYER] Restoring to chunk ${startChunkIndex} at ${startLocalTime}s (global: ${audiobook.last_position}s)`);
+            _log(`[PLAYER] Restoring to chunk ${startChunkIndex} at ${startLocalTime}s (global: ${audiobook.last_position}s)`);
         }
 
         await switchToChunk(startChunkIndex, startLocalTime);
@@ -1078,7 +1083,7 @@ async function playAudiobook(audiobookId) {
                 await loadAudioChunksMetadata(audiobookId);
 
                 if (state.audiobook.chunks.length > oldChunkCount) {
-                    console.log(`[CHUNKS] New chunks available: ${state.audiobook.chunks.length} (was ${oldChunkCount})`);
+                    _log(`[CHUNKS] New chunks available: ${state.audiobook.chunks.length} (was ${oldChunkCount})`);
                     const currentTime = getGlobalTime(state.audiobook.currentChunk, audioPlayer.currentTime);
 
                     let currentIndex = -1;
@@ -1102,10 +1107,10 @@ async function playAudiobook(audiobookId) {
                     const isScrolledNearEnd = distanceFromBottom < clientHeight * 0.5; // Within half a screen of bottom
 
                     if (isPlayingNearEnd || isScrolledNearEnd) {
-                        console.log(`[LRC] Reloading LRC - Playing near end: ${isPlayingNearEnd}, Scrolled near end: ${isScrolledNearEnd}`);
+                        _log(`[LRC] Reloading LRC - Playing near end: ${isPlayingNearEnd}, Scrolled near end: ${isScrolledNearEnd}`);
                         await loadLRC(audiobookId);
                     } else {
-                        console.log(`[LRC] At line ${currentIndex}/${state.lrc.fullData.length}, not near end, skipping reload`);
+                        _log(`[LRC] At line ${currentIndex}/${state.lrc.fullData.length}, not near end, skipping reload`);
                     }
                 }
             }, 5000);
@@ -1135,7 +1140,7 @@ async function playAudiobook(audiobookId) {
                 const globalTime = getGlobalTime(state.audiobook.currentChunk, audioPlayer.currentTime);
                 savePosition(globalTime);
             }
-        }, 3000);
+        }, 30000);
 
         audioPlayer.removeEventListener('pause', handlePause);
         audioPlayer.addEventListener('pause', handlePause);
@@ -1174,7 +1179,7 @@ function updatePlayPauseButton() {
 }
 
 async function seekToTimestamp(timestamp) {
-    console.log(`[SEEK] Seeking to timestamp ${timestamp}s`);
+    _log(`[SEEK] Seeking to timestamp ${timestamp}s`);
 
     state.scroll.suppressAuto = true;
     const chunkInfo = getChunkForGlobalTime(timestamp);
@@ -1183,10 +1188,10 @@ async function seekToTimestamp(timestamp) {
     const wasPlaying = !audioPlayer.paused;
 
     if (chunkInfo.chunkIndex !== state.audiobook.currentChunk) {
-        console.log(`[SEEK] Switching to chunk ${chunkInfo.chunkIndex}, local time ${chunkInfo.localTime}s`);
+        _log(`[SEEK] Switching to chunk ${chunkInfo.chunkIndex}, local time ${chunkInfo.localTime}s`);
         await switchToChunk(chunkInfo.chunkIndex, chunkInfo.localTime, wasPlaying);
     } else {
-        console.log(`[SEEK] Same chunk, seeking to ${chunkInfo.localTime}s`);
+        _log(`[SEEK] Same chunk, seeking to ${chunkInfo.localTime}s`);
         audioPlayer.currentTime = chunkInfo.localTime;
     }
 
@@ -1387,12 +1392,12 @@ function handleTouchStart(e) {
     state.touch.longPressTarget = e.currentTarget; // Store the element reference
     state.touch.longPressTriggered = false;
     
-    console.log('[TOUCH] Touch start, setting up long press timer');
+    _log('[TOUCH] Touch start, setting up long press timer');
     
     // Start long press timer (500ms)
     clearTimeout(state.touch.longPressTimer);
     state.touch.longPressTimer = setTimeout(() => {
-        console.log('[TOUCH] Long press timer triggered!');
+        _log('[TOUCH] Long press timer triggered!');
         state.touch.longPressTriggered = true;
         navigator.vibrate?.(50);
         // Use the stored target instead of e.currentTarget
@@ -1420,7 +1425,7 @@ function handleTouchEnd(e) {
     
     // If long press was triggered, prevent the click and swipe actions
     if (state.touch.longPressTriggered) {
-        console.log('[TOUCH] Long press ended, preventing other actions');
+        _log('[TOUCH] Long press ended, preventing other actions');
         e.preventDefault();
         e.stopPropagation();
         // Keep the flag true momentarily so onclick can check it
@@ -1434,11 +1439,11 @@ function handleTouchEnd(e) {
     const deltaY = Math.abs(e.changedTouches[0].clientY - state.touch.startY);
     const deltaTime = Date.now() - state.touch.startTime;
 
-    console.log('[TOUCH] deltaX:', deltaX, 'deltaY:', deltaY, 'deltaTime:', deltaTime);
+    _log('[TOUCH] deltaX:', deltaX, 'deltaY:', deltaY, 'deltaTime:', deltaTime);
 
     if (deltaX < -30 && deltaY < 50 && deltaTime < 500) {
         const lineIndex = parseInt(e.currentTarget.dataset.index);
-        console.log('[TOUCH] Swipe left detected! Toggling bookmark for line:', lineIndex);
+        _log('[TOUCH] Swipe left detected! Toggling bookmark for line:', lineIndex);
         navigator.vibrate?.(50);
         toggleBookmark(lineIndex);
         e.preventDefault();
@@ -1446,7 +1451,7 @@ function handleTouchEnd(e) {
 }
 
 function showLyricContextMenu(element) {
-    console.log('[CONTEXT MENU] Showing context menu for element:', element);
+    _log('[CONTEXT MENU] Showing context menu for element:', element);
     
     if (!element) {
         console.error('[CONTEXT MENU] Invalid element: null');
@@ -1456,12 +1461,12 @@ function showLyricContextMenu(element) {
     const lineIndex = parseInt(element.dataset.index);
     const timestamp = parseFloat(element.dataset.timestamp);
     
-    console.log('[CONTEXT MENU] Line index:', lineIndex, 'Timestamp:', timestamp);
+    _log('[CONTEXT MENU] Line index:', lineIndex, 'Timestamp:', timestamp);
     
     // Find which chunk this timestamp belongs to
     const chunkInfo = getChunkForGlobalTime(timestamp);
     
-    console.log('[CONTEXT MENU] Chunk info:', chunkInfo);
+    _log('[CONTEXT MENU] Chunk info:', chunkInfo);
     
     // Create/show modal
     let modal = document.getElementById('lyricContextMenu');
@@ -1470,7 +1475,7 @@ function showLyricContextMenu(element) {
         modal.id = 'lyricContextMenu';
         modal.className = 'modal';
         document.body.appendChild(modal);
-        console.log('[CONTEXT MENU] Created new modal');
+        _log('[CONTEXT MENU] Created new modal');
     }
     
     modal.style.display = 'flex';
@@ -1790,7 +1795,7 @@ function toggleProgressMode() {
     const currentTime = getGlobalTime(state.audiobook.currentChunk, DOM.player.currentTime);
     updateProgressDisplay(currentTime);
 
-    console.log('[PLAYER] Progress mode:', state.progress.mode);
+    _log('[PLAYER] Progress mode:', state.progress.mode);
 }
 
 function toggleTimeMode() {
@@ -1803,7 +1808,7 @@ function toggleTimeMode() {
     const currentTime = getGlobalTime(state.audiobook.currentChunk, DOM.player.currentTime);
     updateProgressDisplay(currentTime);
 
-    console.log('[PLAYER] Time mode:', state.progress.timeMode);
+    _log('[PLAYER] Time mode:', state.progress.timeMode);
 }
 
 function gatherPreferences() {
@@ -2001,7 +2006,7 @@ function setupSleepTimerListeners() {
     }
     
     state.sleepTimer.listenersSetup = true;
-    console.log('[SLEEP TIMER] Listeners set up');
+    _log('[SLEEP TIMER] Listeners set up');
 }
 
 function startSleepTimer() {
@@ -2016,11 +2021,11 @@ function startSleepTimer() {
     }
 
     const timeoutMs = state.sleepTimer.minutes * 60 * 1000;
-    console.log(`[SLEEP TIMER] Started: ${state.sleepTimer.minutes} minutes`);
+    _log(`[SLEEP TIMER] Started: ${state.sleepTimer.minutes} minutes`);
 
     state.sleepTimer.timeoutId = setTimeout(() => {
         if (state.playback.isPlaying) {
-            console.log('[SLEEP TIMER] Triggered - pausing playback');
+            _log('[SLEEP TIMER] Triggered - pausing playback');
             togglePlayPause(); // This will pause the playback
             showToast(`Sleep timer triggered - paused after ${state.sleepTimer.minutes} minutes of inactivity`);
         }
@@ -2130,7 +2135,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (audioPlayer) {
         audioPlayer.addEventListener('error', (e) => {
             // Only log, don't show error - retry logic handles recovery
-            console.warn('[AUDIO] Audio element error (will retry if needed):', e.target.error?.message || 'Unknown error');
+            _warn('[AUDIO] Audio element error (will retry if needed):', e.target.error?.message || 'Unknown error');
         });
     }
 });

@@ -3,6 +3,9 @@ from typing import List, Dict
 from app.models.openai_config import OpenAIModel, AddModelRequest
 from app.core.config import settings
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -28,10 +31,10 @@ def load_models() -> Dict[str, OpenAIModel]:
                         model_data['api_model'] = model_data.get('name', name)
                     models[name] = OpenAIModel(**model_data)
                 except Exception as e:
-                    print(f"Error loading model '{name}': {e}")
+                    logger.error("Error loading model '%s': %s", name, e)
             return models
     except Exception as e:
-        print(f"Error loading models file: {e}")
+        logger.error("Error loading models file: %s", e)
         return {}
 
 def save_models(models: Dict[str, OpenAIModel]):
