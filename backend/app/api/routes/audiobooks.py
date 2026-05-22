@@ -4,6 +4,7 @@ from typing import List, Optional
 from pydantic import BaseModel
 from app.models.audiobook import (
     AudiobookMetadata,
+    AudioChunkSummary,
     GenerateAudiobookRequest,
     GenerationStatus
 )
@@ -412,7 +413,7 @@ async def get_audio_chunk(audiobook_id: str, chunk_index: int):
 
 @router.get("/{audiobook_id:path}/chunks")
 async def get_audio_chunks(audiobook_id: str):
-    """Get metadata for all audio chunks"""
+    """Get metadata for all audio chunks (B-7: returns summaries only)"""
     if audiobook_id not in audiobooks_db:
         raise HTTPException(status_code=404, detail="Audiobook not found")
     
@@ -420,7 +421,14 @@ async def get_audio_chunks(audiobook_id: str):
     return {
         "audiobook_id": audiobook_id,
         "total_duration": audiobook.total_duration,
-        "chunks": [chunk.model_dump() for chunk in audiobook.audio_chunks],
+        "chunks": [
+            AudioChunkSummary(
+                index=c.index,
+                start_time=c.start_time,
+                duration=c.duration
+            ).model_dump()
+            for c in audiobook.audio_chunks
+        ],
         "status": audiobook.status
     }
 

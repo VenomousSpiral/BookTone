@@ -16,6 +16,12 @@ class ChapterInfo(BaseModel):
     end_chunk: int    # Index of last text chunk in this chapter
     timestamp: float  # Start time in seconds
 
+class AudioChunkSummary(BaseModel):
+    """Lightweight chunk metadata for list endpoints (B-7)"""
+    index: int
+    start_time: float
+    duration: float
+
 class AudioChunk(BaseModel):
     """Represents a single audio file chunk"""
     index: int  # Chunk file index (0, 1, 2, ...)
