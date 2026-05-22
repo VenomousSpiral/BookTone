@@ -6,9 +6,13 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from typing import Optional, List
 import io
+import time
+import logging
 
 from app.services.stream_service import StreamService
 from app.core.config import settings
+
+_logger = logging.getLogger("ebook_parser")
 
 router = APIRouter()
 stream_service = StreamService()
@@ -62,25 +66,26 @@ class TextBatchRequest(BaseModel):
 @router.get("/parse")
 async def parse_ebook(ebook_path: str, chunk_size: int = 4096, with_images: bool = False):
     """
-    Parse an ebook and return its structure with chunks
-    Returns chapters, chunks metadata (without full text to reduce size)
-    If with_images=True, also returns image IDs for each chunk
+    Parse an ebook and return its structure with chunks.
+    Uses disk-backed cache from upload-time pre-processing.
     """
+    t0 = time.time()
+    _logger.debug("[STREAM] /parse called: ebook=%s with_images=%s", ebook_path, with_images)
     try:
         if with_images:
             result = stream_service.parse_ebook_with_images(ebook_path, chunk_size)
-            # Return chunks metadata with image IDs
             chunks_metadata = [
                 {
                     "index": chunk["index"],
                     "start_idx": chunk["start_idx"],
                     "end_idx": chunk["end_idx"],
                     "length": chunk["length"],
-                    "images": chunk.get("images", [])
+                    "images": chunk.get("image_data", [])
                 }
                 for chunk in result["chunks"]
             ]
-            
+            elapsed = time.time() - t0
+            _logger.debug("[STREAM] /parse DONE (with_images): ebook=%s took=%.2fs chunks=%d", ebook_path, elapsed, len(chunks_metadata))
             return {
                 "title": result["title"],
                 "chapters": result["chapters"],
@@ -91,8 +96,6 @@ async def parse_ebook(ebook_path: str, chunk_size: int = 4096, with_images: bool
             }
         else:
             result = stream_service.parse_ebook_for_streaming(ebook_path, chunk_size)
-            
-            # Return chunks without text content to reduce response size
             chunks_metadata = [
                 {
                     "index": chunk["index"],
@@ -102,7 +105,8 @@ async def parse_ebook(ebook_path: str, chunk_size: int = 4096, with_images: bool
                 }
                 for chunk in result["chunks"]
             ]
-            
+            elapsed = time.time() - t0
+            _logger.debug("[STREAM] /parse DONE (no images): ebook=%s took=%.2fs chunks=%d", ebook_path, elapsed, len(chunks_metadata))
             return {
                 "title": result["title"],
                 "chapters": result["chapters"],
@@ -113,6 +117,8 @@ async def parse_ebook(ebook_path: str, chunk_size: int = 4096, with_images: bool
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        elapsed = time.time() - t0
+        _logger.error("[STREAM] /parse FAILED: ebook=%s took=%.2fs error=%s", ebook_path, elapsed, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -166,8 +172,7 @@ async def get_text_segment(
 async def get_text_batch(request: TextBatchRequest):
     """
     Get text for multiple chunks in one request.
-    Returns a dict of chunk_index -> chunk data.
-    Much more efficient than fetching each chunk individually.
+    Uses cached parse result from upload-time pre-processing.
     """
     try:
         if request.with_images:
@@ -442,3 +447,112 @@ async def clear_cache(ebook_path: str, model: str = None, voice: str = None):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/parse-cache-status")
+async def get_parse_cache_status(ebook_path: str):
+    """
+    Get information about parsed ebook cache (not stream audio cache).
+    Returns cache hit status, file size, and cache age.
+    """
+    try:
+        full_path = stream_service._resolve_ebook_path(ebook_path)
+        parser = stream_service.ebook_parser
+
+        # Check disk cache files
+        cache_file_no_img = parser._get_cache_file(full_path, with_images=False)
+        cache_file_img = parser._get_cache_file(full_path, with_images=True)
+
+        status = {
+            "ebook_path": ebook_path,
+            "parsed_cache": {
+                "exists": cache_file_no_img.exists(),
+                "size_bytes": cache_file_no_img.stat().st_size if cache_file_no_img.exists() else 0,
+                "size_mb": round(cache_file_no_img.stat().st_size / (1024 * 1024), 2) if cache_file_no_img.exists() else 0,
+                "with_images": {
+                    "exists": cache_file_img.exists(),
+                    "size_bytes": cache_file_img.stat().st_size if cache_file_img.exists() else 0,
+                    "size_mb": round(cache_file_img.stat().st_size / (1024 * 1024), 2) if cache_file_img.exists() else 0,
+                }
+            },
+            "in_memory_cache": ebook_path in str(list(parser._parse_cache.keys()))
+        }
+        return status
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/parse-cache")
+async def clear_parse_cache(ebook_path: str):
+    """
+    Clear parsed ebook cache (not stream audio cache).
+    Removes both with_images and without_images cache entries.
+    """
+    try:
+        full_path = stream_service._resolve_ebook_path(ebook_path)
+        parser = stream_service.ebook_parser
+        parser.clear_cache(full_path, with_images=False)
+        parser.clear_cache(full_path, with_images=True)
+        return {"message": "Parsed ebook cache cleared"}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/parse-cache-list")
+async def list_parse_cache():
+    """
+    List all parsed ebook cache files with sizes.
+    """
+    import os
+    cache_dir = settings.STORAGE_DIR / "stream_cache"
+    if not cache_dir.exists():
+        return {"caches": [], "total_size_mb": 0}
+
+    caches = []
+    total_size = 0
+    for f in sorted(cache_dir.glob("*.json")):
+        size = f.stat().st_size
+        total_size += size
+        caches.append({
+            "filename": f.name,
+            "size_bytes": size,
+            "size_mb": round(size / (1024 * 1024), 2),
+            "with_images": "_with_images" in f.name
+        })
+
+    return {
+        "caches": caches,
+        "total_count": len(caches),
+        "total_size_mb": round(total_size / (1024 * 1024), 2)
+    }
+
+
+@router.delete("/parse-cache-all")
+async def clear_all_parse_cache():
+    """
+    Clear ALL parsed ebook cache files from disk and memory.
+    """
+    import shutil
+    cache_dir = settings.STORAGE_DIR / "stream_cache"
+    deleted_count = 0
+    deleted_size = 0
+
+    if cache_dir.exists():
+        for f in cache_dir.glob("*.json"):
+            deleted_size += f.stat().st_size
+            f.unlink()
+            deleted_count += 1
+
+    # Clear all parsers' in-memory caches
+    for service in [stream_service]:
+        service.ebook_parser._parse_cache.clear()
+
+    return {
+        "message": f"Cleared {deleted_count} cache files",
+        "deleted_count": deleted_count,
+        "deleted_size_mb": round(deleted_size / (1024 * 1024), 2)
+    }

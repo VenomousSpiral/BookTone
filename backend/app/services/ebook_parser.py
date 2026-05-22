@@ -4,9 +4,31 @@ import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
 import re
+import json
+import hashlib
+from datetime import datetime
 from PyPDF2 import PdfReader
 import base64
-import hashlib
+import logging
+
+from app.core.config import settings
+
+# ------------------------------------------------------------------ #
+#  DEBUG LOGGING: Remove this block entirely to disable all debug    #
+#  output from the ebook parser.                                     #
+#  To enable: set level to logging.DEBUG (default is WARNING).       #
+# ------------------------------------------------------------------ #
+_EBOOK_PARSER_DEBUG = True  # <-- Set to False to disable all debug logs
+if _EBOOK_PARSER_DEBUG:
+    _logger = logging.getLogger("ebook_parser")
+    _logger.setLevel(logging.DEBUG)
+    if not _logger.handlers:
+        _handler = logging.StreamHandler()
+        _handler.setLevel(logging.DEBUG)
+        _logger.addHandler(_handler)
+else:
+    _logger = logging.getLogger("ebook_parser")
+    _logger.setLevel(logging.WARNING)
 
 class EbookParser:
     """Parse ebooks and extract text content"""
@@ -15,6 +37,7 @@ class EbookParser:
     
     def __init__(self):
         self._image_cache = {}  # Cache for extracted images {ebook_path: {image_id: base64_data}}
+        self._parse_cache = {}  # In-memory cache {cache_key: {mtime, data}}
     
     def parse_ebook(self, file_path: Path) -> List[Dict[str, str]]:
         """
@@ -484,5 +507,304 @@ class EbookParser:
         if current_chunk and self._is_valid_text_chunk(current_chunk):
             split_chunks = self._split_oversized_chunk(current_chunk, max_chunk_chars)
             chunks.extend(split_chunks)
-        
+
         return chunks
+
+    # ------------------------------------------------------------------ #
+    #  Disk-backed caching for parsed ebooks (B-3, B-5, B-11)           #
+    # ------------------------------------------------------------------ #
+
+    def parse_and_cache(self, file_path: Path, with_images: bool = False) -> Dict:
+        """
+        Parse an ebook and cache the result on disk.
+        Returns the parsed data structure.
+
+        The cached result is stored in:
+            storage/stream_cache/{safe_stem}_{hash}{suffix}.json
+
+        On subsequent calls, if the file hasn't changed (same mtime),
+        the cached result is returned instantly.
+        """
+        if not file_path.exists():
+            file_path = settings.STORAGE_DIR / "ebooks" / file_path
+
+        _logger.debug("[PARSE] parse_and_cache START: file=%s with_images=%s", file_path, with_images)
+
+        file_hash = self._compute_file_hash(file_path)
+        cache_key = f"{file_path}:{file_hash}:{with_images}"
+
+        # Check in-memory cache first
+        if cache_key in self._parse_cache:
+            cached = self._parse_cache[cache_key]
+            if cached['mtime'] == file_path.stat().st_mtime:
+                _logger.debug("[PARSE] IN-MEMORY CACHE HIT: file=%s with_images=%s", file_path, with_images)
+                return cached['data']
+            else:
+                _logger.debug("[PARSE] IN-MEMORY CACHE STALE (mtime changed): file=%s with_images=%s", file_path, with_images)
+
+        # Check disk cache
+        cache_file = self._get_cache_file(file_path, with_images)
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                if cached_data.get('_file_mtime') == file_path.stat().st_mtime:
+                    _logger.debug("[PARSE] DISK CACHE HIT: file=%s with_images=%s cache=%s", file_path, with_images, cache_file)
+                    self._parse_cache[cache_key] = {
+                        'mtime': file_path.stat().st_mtime,
+                        'data': cached_data
+                    }
+                    return cached_data
+                else:
+                    _logger.debug("[PARSE] DISK CACHE STALE (mtime changed): file=%s with_images=%s", file_path, with_images)
+            except (json.JSONDecodeError, KeyError) as e:
+                _logger.debug("[PARSE] DISK CACHE CORRUPT (will re-parse): file=%s with_images=%s error=%s", file_path, with_images, e)
+        else:
+            _logger.debug("[PARSE] NO DISK CACHE: file=%s with_images=%s", file_path, with_images)
+
+        # Parse the ebook (this is the slow part)
+        _logger.debug("[PARSE] ACTUAL PARSING: file=%s with_images=%s", file_path, with_images)
+        import time
+        t0 = time.time()
+
+        if with_images:
+            data = self._parse_for_streaming_with_images(file_path)
+        else:
+            data = self._parse_for_streaming(file_path)
+
+        elapsed = time.time() - t0
+        _logger.debug("[PARSE] PARSING DONE: file=%s with_images=%s took=%.2fs chunks=%d", file_path, with_images, elapsed, len(data.get('chunks', [])))
+
+        data['_file_mtime'] = file_path.stat().st_mtime
+        data['_file_hash'] = file_hash
+        data['_with_images'] = with_images
+        data['_cached_at'] = datetime.now().isoformat()
+
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_file, 'w') as f:
+            json.dump(data, f)
+
+        _logger.debug("[PARSE] CACHE SAVED TO DISK: file=%s with_images=%s cache=%s", file_path, with_images, cache_file)
+
+        self._parse_cache[cache_key] = {
+            'mtime': file_path.stat().st_mtime,
+            'data': data
+        }
+
+        return data
+
+    def _parse_for_streaming(self, file_path: Path) -> Dict:
+        """Parse ebook and build streaming data structure (cached version)."""
+        chapters_data = self.parse_ebook(file_path)
+
+        all_text_chunks = []
+        chapters = []
+        chunk_index = 0
+        current_char_pos = 0
+
+        for chapter_idx, chapter_data in enumerate(chapters_data):
+            chapter_start_chunk = chunk_index
+            chapter_start_char = current_char_pos
+            text_chunks = self.chunk_text(chapter_data['text'], 4096)
+
+            for text_chunk in text_chunks:
+                chunk_start_char = current_char_pos
+                chunk_end_char = current_char_pos + len(text_chunk)
+                all_text_chunks.append({
+                    "index": chunk_index,
+                    "start_idx": chunk_start_char,
+                    "end_idx": chunk_end_char,
+                    "text": text_chunk,
+                    "length": len(text_chunk),
+                    "chapter_index": chapter_idx
+                })
+                current_char_pos = chunk_end_char
+                chunk_index += 1
+
+            chapter_end_chunk = chunk_index - 1
+            chapter_end_char = current_char_pos
+            chapters.append({
+                "name": chapter_data.get('chapter', 'Unknown Chapter'),
+                "start_idx": chapter_start_char,
+                "end_idx": chapter_end_char,
+                "start_chunk": chapter_start_chunk,
+                "end_chunk": chapter_end_chunk,
+                "length": chapter_end_char - chapter_start_char
+            })
+
+        # B-11: Pre-compute binary-searchable time index
+        chunk_time_index = [
+            {"start_time": c["start_idx"], "chunk_index": c["index"]}
+            for c in all_text_chunks
+        ]
+
+        return {
+            "title": file_path.stem,
+            "chapters": chapters,
+            "chunks": all_text_chunks,
+            "total_chars": current_char_pos,
+            "total_chunks": len(all_text_chunks),
+            "chunk_time_index": chunk_time_index
+        }
+
+    def _parse_for_streaming_with_images(self, file_path: Path) -> Dict:
+        """Parse ebook with images and build streaming data structure (cached version)."""
+        chapters_data, all_images = self.parse_ebook_with_images(file_path)
+
+        marker_pattern = re.compile(r'<<<IMAGE_\d+>>>')
+        all_text_chunks = []
+        chapters = []
+        chunk_index = 0
+        current_char_pos = 0
+
+        for chapter_idx, chapter_data in enumerate(chapters_data):
+            chapter_start_chunk = chunk_index
+            chapter_start_char = current_char_pos
+            chapter_text_with_markers = chapter_data.get('text', '')
+            image_markers = chapter_data.get('image_markers', [])
+
+            clean_chapter_text_raw = marker_pattern.sub('', chapter_text_with_markers)
+            clean_chapter_text = re.sub(r' +', ' ', clean_chapter_text_raw).strip()
+
+            image_positions = []
+            normalized_clean_pos = 0
+            marked_pos = 0
+            last_was_space = False
+
+            while marked_pos < len(chapter_text_with_markers):
+                marker_match = marker_pattern.match(chapter_text_with_markers[marked_pos:])
+                if marker_match:
+                    for marker_info in image_markers:
+                        if marker_info['marker'] == marker_match.group():
+                            image_positions.append((normalized_clean_pos, marker_info))
+                            break
+                    marked_pos += len(marker_match.group())
+                else:
+                    char = chapter_text_with_markers[marked_pos]
+                    is_space = char == ' '
+                    if is_space:
+                        if not last_was_space and normalized_clean_pos > 0:
+                            normalized_clean_pos += 1
+                        last_was_space = True
+                    else:
+                        normalized_clean_pos += 1
+                        last_was_space = False
+                    marked_pos += 1
+
+            text_chunks = self.chunk_text(clean_chapter_text, 4096)
+            chapter_clean_pos = 0
+
+            for i, clean_text_chunk in enumerate(text_chunks):
+                chunk_start_char = current_char_pos
+                chunk_end_char = current_char_pos + len(clean_text_chunk)
+                chunk_start_in_chapter = clean_chapter_text.find(clean_text_chunk, chapter_clean_pos)
+                if chunk_start_in_chapter == -1:
+                    chunk_start_in_chapter = chapter_clean_pos
+                chunk_end_in_chapter = chunk_start_in_chapter + len(clean_text_chunk)
+
+                chunk_image_data = []
+                for img_pos, marker_info in image_positions:
+                    if chunk_start_in_chapter <= img_pos <= chunk_end_in_chapter:
+                        chunk_image_data.append({
+                            'id': marker_info['id'],
+                            'marker': marker_info['marker'],
+                            'position': img_pos - chunk_start_in_chapter
+                        })
+
+                display_text = clean_text_chunk
+                for img_data in sorted(chunk_image_data, key=lambda x: x['position'], reverse=True):
+                    display_text = display_text[:img_data['position']] + img_data['marker'] + display_text[img_data['position']:]
+
+                final_image_data = []
+                for img_data in chunk_image_data:
+                    actual_pos = display_text.find(img_data['marker'])
+                    if actual_pos != -1:
+                        final_image_data.append({
+                            'id': img_data['id'],
+                            'marker': img_data['marker'],
+                            'position': actual_pos
+                        })
+
+                all_text_chunks.append({
+                    "index": chunk_index,
+                    "start_idx": chunk_start_char,
+                    "end_idx": chunk_end_char,
+                    "text": clean_text_chunk,
+                    "display_text": display_text,
+                    "length": len(clean_text_chunk),
+                    "chapter_index": chapter_idx,
+                    "image_data": final_image_data
+                })
+                chapter_clean_pos = chunk_end_in_chapter
+                current_char_pos = chunk_end_char
+                chunk_index += 1
+
+            if not text_chunks and image_markers:
+                chunk_image_data = [{'id': m['id'], 'marker': m['marker'], 'position': 0} for m in image_markers]
+                display_text = ''.join(m['marker'] for m in image_markers)
+                all_text_chunks.append({
+                    "index": chunk_index,
+                    "start_idx": current_char_pos,
+                    "end_idx": current_char_pos,
+                    "text": "",
+                    "display_text": display_text,
+                    "length": 0,
+                    "chapter_index": chapter_idx,
+                    "image_data": chunk_image_data
+                })
+                chunk_index += 1
+
+            chapter_end_chunk = max(chapter_start_chunk, chunk_index - 1)
+            chapter_end_char = current_char_pos
+            chapters.append({
+                "name": chapter_data.get('chapter', 'Unknown Chapter'),
+                "start_idx": chapter_start_char,
+                "end_idx": chapter_end_char,
+                "start_chunk": chapter_start_chunk,
+                "end_chunk": chapter_end_chunk,
+                "length": chapter_end_char - chapter_start_char
+            })
+
+        # B-11: Pre-compute binary-searchable time index
+        chunk_time_index = [
+            {"start_time": c["start_idx"], "chunk_index": c["index"]}
+            for c in all_text_chunks
+        ]
+
+        return {
+            "title": file_path.stem,
+            "chapters": chapters,
+            "chunks": all_text_chunks,
+            "images": all_images,
+            "total_chars": current_char_pos,
+            "total_chunks": len(all_text_chunks),
+            "chunk_time_index": chunk_time_index
+        }
+
+    def _get_cache_file(self, file_path: Path, with_images: bool) -> Path:
+        """Get the cache file path for a parsed ebook."""
+        file_hash = self._compute_file_hash(file_path)[:12]
+        safe_stem = "".join(c if c.isalnum() or c in '-_' else '_' for c in file_path.stem)[:50]
+        suffix = "_with_images" if with_images else ""
+        cache_dir = settings.STORAGE_DIR / "stream_cache"
+        return cache_dir / f"{safe_stem}_{file_hash}{suffix}.json"
+
+    def _compute_file_hash(self, file_path: Path) -> str:
+        """Compute MD5 hash of file."""
+        hash_md5 = hashlib.md5()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+
+    def clear_cache(self, file_path: Path, with_images: bool = False):
+        """Clear cache for a specific ebook."""
+        cache_file = self._get_cache_file(file_path, with_images)
+        if cache_file.exists():
+            cache_file.unlink()
+        try:
+            file_hash = self._compute_file_hash(file_path)
+        except Exception:
+            file_hash = ""
+        cache_key = f"{file_path}:{file_hash}:{with_images}"
+        self._parse_cache.pop(cache_key, None)

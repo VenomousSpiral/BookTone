@@ -57,7 +57,59 @@ class StreamService:
             scrubbed = scrubbed.replace(char, '')
         
         return scrubbed
-    
+
+    def _find_chunk_for_char_pos(self, ebook_path: str, char_pos: int) -> Optional[int]:
+        """
+        Find the chunk index that contains the given character position.
+        Uses binary search on chunk_time_index if available (B-11),
+        falls back to linear scan.
+        """
+        # Try cached data first
+        cache_key_prefix = f"{self._get_cache_key(ebook_path)}:"
+        for key, data in self._cache.items():
+            if key.startswith(cache_key_prefix) and 'chunks' in data:
+                chunks = data.get('chunks', [])
+                time_index = data.get('chunk_time_index')
+                if time_index:
+                    # Binary search (B-11)
+                    lo, hi = 0, len(time_index) - 1
+                    while lo <= hi:
+                        mid = (lo + hi) >> 1
+                        if time_index[mid]['start_time'] <= char_pos:
+                            lo = mid + 1
+                        else:
+                            hi = mid - 1
+                    idx = lo - 1
+                    if 0 <= idx < len(chunks):
+                        return chunks[idx]['index']
+                else:
+                    # Linear scan fallback
+                    for chunk in chunks:
+                        if chunk['start_idx'] <= char_pos < chunk['end_idx']:
+                            return chunk['index']
+                break
+
+        # Parse fresh as fallback
+        ebook_data = self.parse_ebook_for_streaming(ebook_path)
+        chunks = ebook_data.get('chunks', [])
+        time_index = ebook_data.get('chunk_time_index')
+        if time_index:
+            lo, hi = 0, len(time_index) - 1
+            while lo <= hi:
+                mid = (lo + hi) >> 1
+                if time_index[mid]['start_time'] <= char_pos:
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            idx = lo - 1
+            if 0 <= idx < len(chunks):
+                return chunks[idx]['index']
+        else:
+            for chunk in chunks:
+                if chunk['start_idx'] <= char_pos < chunk['end_idx']:
+                    return chunk['index']
+        return None
+
     def _load_progress_db(self):
         """Load streaming progress database from disk"""
         if self.progress_file.exists():
@@ -198,272 +250,24 @@ class StreamService:
     
     def parse_ebook_for_streaming(self, ebook_path: str, chunk_size: int = 4096) -> Dict:
         """
-        Parse ebook and return full text with chapter information and text chunks
-        Uses the EXACT same chunking as audio generation
-        Returns: {
-            "title": str,
-            "full_text": str,
-            "chapters": [{"name": str, "start_idx": int, "end_idx": int, "start_chunk": int, "end_chunk": int}],
-            "chunks": [{"index": int, "start_idx": int, "end_idx": int, "text": str, "chapter_index": int}],
-            "total_chars": int,
-            "total_chunks": int
-        }
+        Parse ebook using cached result from upload-time pre-processing.
+        Falls back to on-the-fly parsing if no cache exists.
+        Returns same structure as before, plus optional chunk_time_index.
         """
-        # Check cache
-        cache_key = f"{self._get_cache_key(ebook_path)}:{chunk_size}"
-        if cache_key in self._cache:
-            print(f"[DEBUG] Returning cached ebook data for {ebook_path}")
-            return self._cache[cache_key]
-        
-        print(f"[DEBUG] Parsing ebook for streaming: {ebook_path}")
         full_path = self._resolve_ebook_path(ebook_path)
-        
-        # Parse ebook chapters (same as audio generation)
-        chapters_data = self.ebook_parser.parse_ebook(full_path)
-        
-        # Build text chunks using EXACT same logic as audio generation
-        all_text_chunks = []
-        chapters = []
-        chunk_index = 0
-        current_char_pos = 0
-        
-        for chapter_idx, chapter_data in enumerate(chapters_data):
-            chapter_start_chunk = chunk_index
-            chapter_start_char = current_char_pos
-            
-            # Use the SAME chunk_text method as audio generation
-            text_chunks = self.ebook_parser.chunk_text(
-                chapter_data['text'],
-                chunk_size
-            )
-            
-            # Add chunks with metadata
-            for text_chunk in text_chunks:
-                chunk_start_char = current_char_pos
-                chunk_end_char = current_char_pos + len(text_chunk)
-                
-                all_text_chunks.append({
-                    "index": chunk_index,
-                    "start_idx": chunk_start_char,
-                    "end_idx": chunk_end_char,
-                    "text": text_chunk,
-                    "length": len(text_chunk),
-                    "chapter_index": chapter_idx
-                })
-                
-                current_char_pos = chunk_end_char
-                chunk_index += 1
-            
-            chapter_end_chunk = chunk_index - 1
-            chapter_end_char = current_char_pos
-            
-            chapters.append({
-                "name": chapter_data.get('chapter', 'Unknown Chapter'),
-                "start_idx": chapter_start_char,
-                "end_idx": chapter_end_char,
-                "start_chunk": chapter_start_chunk,
-                "end_chunk": chapter_end_chunk,
-                "length": chapter_end_char - chapter_start_char
-            })
-        
-        result = {
-            "title": Path(ebook_path).stem,
-            "chapters": chapters,
-            "chunks": all_text_chunks,
-            "total_chars": current_char_pos,
-            "total_chunks": len(all_text_chunks)
-        }
-        
-        # Cache result
-        self._cache[cache_key] = result
-        
-        print(f"[DEBUG] Parsed ebook: {result['total_chars']} chars, {len(chapters)} chapters, {len(all_text_chunks)} chunks")
-        return result
+        data = self.ebook_parser.parse_and_cache(full_path, with_images=False)
+
+        # Ensure chunk_size is respected (pre-processing always uses 4096)
+        return data
     
     def parse_ebook_with_images(self, ebook_path: str, chunk_size: int = 4096) -> Dict:
         """
-        Parse ebook with images for streaming mode
-        Returns same structure as parse_ebook_for_streaming but with image data for display.
-        Stores clean_text (without markers) for audio generation.
+        Parse ebook with images using cached result from upload-time pre-processing.
+        Falls back to on-the-fly parsing if no cache exists.
         """
-        # Check cache with images
-        cache_key = f"{self._get_cache_key(ebook_path)}:{chunk_size}:with_images"
-        if cache_key in self._cache:
-            print(f"[DEBUG] Returning cached ebook data with images for {ebook_path}")
-            return self._cache[cache_key]
-        
-        print(f"[DEBUG] Parsing ebook with images for streaming: {ebook_path}")
         full_path = self._resolve_ebook_path(ebook_path)
-        
-        # Parse ebook chapters with images
-        chapters_data, all_images = self.ebook_parser.parse_ebook_with_images(full_path)
-        
-        # Build text chunks using same logic as regular parsing
-        all_text_chunks = []
-        chapters = []
-        chunk_index = 0
-        current_char_pos = 0  # Position in CLEAN text (for audio sync)
-        
-        import re
-        marker_pattern = re.compile(r'<<<IMAGE_\d+>>>')
-        
-        for chapter_idx, chapter_data in enumerate(chapters_data):
-            chapter_start_chunk = chunk_index
-            chapter_start_char = current_char_pos
-            chapter_text_with_markers = chapter_data.get('text', '')
-            image_markers = chapter_data.get('image_markers', [])
-            
-            # Get clean text (without markers) for chunking and audio
-            # IMPORTANT: We must normalize spaces to match what chunk_text() produces
-            clean_chapter_text_raw = marker_pattern.sub('', chapter_text_with_markers)
-            clean_chapter_text = re.sub(r' +', ' ', clean_chapter_text_raw).strip()
-            
-            # Build a map of positions in NORMALIZED clean text where images should appear
-            # We need to track positions accounting for space normalization
-            image_positions = []  # List of (normalized_clean_text_position, marker_info)
-            
-            # Walk through marked text and track position in normalized clean text
-            normalized_clean_pos = 0
-            marked_pos = 0
-            last_was_space = False  # Track for space normalization
-            
-            while marked_pos < len(chapter_text_with_markers):
-                marker_match = marker_pattern.match(chapter_text_with_markers[marked_pos:])
-                if marker_match:
-                    marker = marker_match.group()
-                    # Find corresponding marker_info
-                    for marker_info in image_markers:
-                        if marker_info['marker'] == marker:
-                            image_positions.append((normalized_clean_pos, marker_info))
-                            break
-                    marked_pos += len(marker)
-                    # Don't increment normalized_clean_pos - marker doesn't exist in clean text
-                else:
-                    char = chapter_text_with_markers[marked_pos]
-                    is_space = char == ' '
-                    
-                    # Only count this character if it's not a duplicate space
-                    if is_space:
-                        if not last_was_space and normalized_clean_pos > 0:
-                            # This space will appear in normalized text
-                            normalized_clean_pos += 1
-                        # Skip duplicate spaces or leading spaces
-                        last_was_space = True
-                    else:
-                        normalized_clean_pos += 1
-                        last_was_space = False
-                    
-                    marked_pos += 1
-            
-            # Use the SAME chunk_text method as audio generation on CLEAN text
-            text_chunks = self.ebook_parser.chunk_text(clean_chapter_text, chunk_size)
-            
-            # Track cumulative position in clean chapter text
-            chapter_clean_pos = 0
-            
-            # Add chunks with metadata and inline image markers
-            for i, clean_text_chunk in enumerate(text_chunks):
-                chunk_start_char = current_char_pos
-                chunk_end_char = current_char_pos + len(clean_text_chunk)
-                
-                # Find where this chunk appears in the clean chapter text
-                # (chunk_text may strip/modify, so we need to find it)
-                chunk_start_in_chapter = clean_chapter_text.find(clean_text_chunk, chapter_clean_pos)
-                if chunk_start_in_chapter == -1:
-                    # Fallback: just use current position
-                    chunk_start_in_chapter = chapter_clean_pos
-                chunk_end_in_chapter = chunk_start_in_chapter + len(clean_text_chunk)
-                
-                # Find images that fall within this chunk's range
-                chunk_image_data = []
-                for img_pos, marker_info in image_positions:
-                    if chunk_start_in_chapter <= img_pos <= chunk_end_in_chapter:
-                        # Calculate position within the chunk for display
-                        pos_in_chunk = img_pos - chunk_start_in_chapter
-                        chunk_image_data.append({
-                            'id': marker_info['id'],
-                            'marker': marker_info['marker'],
-                            'position': pos_in_chunk
-                        })
-                
-                # Build display text by inserting markers at their positions
-                # Sort by position (reverse order so insertions don't shift positions)
-                display_text = clean_text_chunk
-                for img_data in sorted(chunk_image_data, key=lambda x: x['position'], reverse=True):
-                    pos = img_data['position']
-                    marker = img_data['marker']
-                    display_text = display_text[:pos] + marker + display_text[pos:]
-                
-                # Update positions in chunk_image_data to reflect final display_text positions
-                # Recalculate since we modified the string
-                final_image_data = []
-                for img_data in chunk_image_data:
-                    actual_pos = display_text.find(img_data['marker'])
-                    if actual_pos != -1:
-                        final_image_data.append({
-                            'id': img_data['id'],
-                            'marker': img_data['marker'],
-                            'position': actual_pos
-                        })
-                
-                all_text_chunks.append({
-                    "index": chunk_index,
-                    "start_idx": chunk_start_char,  # Position in clean text (for audio)
-                    "end_idx": chunk_end_char,
-                    "text": clean_text_chunk,  # Clean text for audio
-                    "display_text": display_text,  # Text with markers for display
-                    "length": len(clean_text_chunk),
-                    "chapter_index": chapter_idx,
-                    "image_data": final_image_data  # Contains position info in display_text
-                })
-                
-                # Update position tracking
-                chapter_clean_pos = chunk_end_in_chapter
-                current_char_pos = chunk_end_char
-                chunk_index += 1
-            
-            # If no text chunks but there are images, create a chunk for them
-            if not text_chunks and image_markers:
-                chunk_image_data = [{'id': m['id'], 'marker': m['marker'], 'position': 0} for m in image_markers]
-                display_text = ''.join(m['marker'] for m in image_markers)
-                all_text_chunks.append({
-                    "index": chunk_index,
-                    "start_idx": current_char_pos,
-                    "end_idx": current_char_pos,
-                    "text": "",
-                    "display_text": display_text,
-                    "length": 0,
-                    "chapter_index": chapter_idx,
-                    "image_data": chunk_image_data
-                })
-                chunk_index += 1
-            
-            chapter_end_chunk = max(chapter_start_chunk, chunk_index - 1)
-            chapter_end_char = current_char_pos
-            
-            chapters.append({
-                "name": chapter_data.get('chapter', 'Unknown Chapter'),
-                "start_idx": chapter_start_char,
-                "end_idx": chapter_end_char,
-                "start_chunk": chapter_start_chunk,
-                "end_chunk": chapter_end_chunk,
-                "length": chapter_end_char - chapter_start_char
-            })
-        
-        result = {
-            "title": Path(ebook_path).stem,
-            "chapters": chapters,
-            "chunks": all_text_chunks,
-            "images": all_images,
-            "total_chars": current_char_pos,
-            "total_chunks": len(all_text_chunks)
-        }
-        
-        # Cache result
-        self._cache[cache_key] = result
-        
-        print(f"[DEBUG] Parsed ebook with images: {result['total_chars']} chars, {len(chapters)} chapters, {len(all_text_chunks)} chunks, {len(all_images)} images")
-        return result
+        data = self.ebook_parser.parse_and_cache(full_path, with_images=True)
+        return data
     
     def get_image(self, ebook_path: str, image_id: str) -> Optional[str]:
         """Get a specific image by ID (returns base64 data URL)"""

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Audiobook Server"
     DEBUG: bool = False
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = 8984
     
     # Paths
     BASE_DIR: Path = Path(__file__).parent.parent.parent.parent

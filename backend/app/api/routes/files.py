@@ -4,8 +4,12 @@ from typing import List, Optional
 from pathlib import Path
 from pydantic import BaseModel
 import shutil
+import threading
+import time
+import logging
 from app.core.config import settings
 from app.services.file_manager import FileManager
+from app.services.ebook_parser import EbookParser
 
 router = APIRouter()
 file_manager = FileManager()
@@ -42,9 +46,31 @@ async def upload_file(
     file: UploadFile = File(...),
     path: str = Query("", description="Target subdirectory")
 ):
-    """Upload an ebook file"""
+    """Upload an ebook file (with background pre-parsing)"""
     try:
         file_path = file_manager.save_uploaded_file(file, path)
+
+        _logger = logging.getLogger("ebook_parser")
+        _logger.debug("[UPLOAD] File saved: file=%s", file_path)
+
+        # Background pre-parse: build disk cache so streaming is instant
+        def _pre_parse():
+            _logger.debug("[UPLOAD] Pre-parse thread STARTED: file=%s", file_path)
+            t0 = time.time()
+            try:
+                parser = EbookParser()
+                parser.parse_and_cache(file_path, with_images=False)
+                if file_path.suffix.lower() in ('.epub', '.pdf'):
+                    parser.parse_and_cache(file_path, with_images=True)
+                elapsed = time.time() - t0
+                _logger.debug("[UPLOAD] Pre-parse thread COMPLETED: file=%s took=%.2fs", file_path, elapsed)
+            except Exception as e:
+                elapsed = time.time() - t0
+                _logger.error("[UPLOAD] Pre-parse thread FAILED: file=%s took=%.2fs error=%s", file_path, elapsed, e)
+
+        threading.Thread(target=_pre_parse, daemon=True).start()
+        _logger.debug("[UPLOAD] Pre-parse thread started (non-blocking)")
+
         return {
             "message": "File uploaded successfully",
             "filename": file.filename,
@@ -55,8 +81,17 @@ async def upload_file(
 
 @router.delete("/delete")
 async def delete_file(file_path: str):
-    """Delete an ebook file"""
+    """Delete an ebook file (with cache cleanup)"""
     try:
+        # Clear parse cache before deleting the file
+        try:
+            parser = EbookParser()
+            fp = Path(file_path)
+            parser.clear_cache(fp, with_images=False)
+            parser.clear_cache(fp, with_images=True)
+        except Exception:
+            pass  # File may not exist yet, or cache already cleared
+
         file_manager.delete_file(file_path)
         return {"message": "File deleted successfully", "path": file_path}
     except Exception as e:
