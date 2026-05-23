@@ -404,9 +404,10 @@ async def get_audio_chunk(audiobook_id: str, chunk_index: int):
             "Expires": "0"
         }
     
+    media_types = {"opus": "audio/opus", "mp3": "audio/mpeg"}
     return FileResponse(
         path=str(chunk_path),
-        media_type="audio/mpeg",
+        media_type=media_types.get(settings.AUDIO_FORMAT, "audio/mpeg"),
         filename=chunk.filename,
         headers=headers
     )
@@ -743,7 +744,7 @@ def combine_audiobook_chunks(audiobook_id: str):
             return
         
         audiobook_dir = settings.AUDIOBOOKS_DIR / audiobook_id
-        combined_path = audiobook_dir / "combined_download.mp3"
+        combined_path = audiobook_dir / f"combined_download.{settings.AUDIO_FORMAT}"
         
         # Initialize progress
         download_progress[audiobook_id] = {
@@ -812,7 +813,7 @@ def combine_audiobook_chunks(audiobook_id: str):
         
         # Use ffmpeg concat demuxer - this is very efficient and doesn't load files into memory
         # It just concatenates the MP3 streams directly
-        temp_output = str(combined_path) + ".tmp.mp3"  # Use .mp3 extension so ffmpeg recognizes format
+        temp_output = str(combined_path) + f".tmp.{settings.AUDIO_FORMAT}"  # Use correct extension so ffmpeg recognizes format
         
         # Remove temp output if it exists from a previous failed attempt
         if os.path.exists(temp_output):
@@ -922,7 +923,7 @@ async def prepare_download(audiobook_id: str, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=400, detail="No audio chunks available")
     
     audiobook_dir = settings.AUDIOBOOKS_DIR / audiobook_id
-    combined_path = audiobook_dir / "combined_download.mp3"
+    combined_path = audiobook_dir / f"combined_download.{settings.AUDIO_FORMAT}"
     
     # Check if already ready
     if combined_path.exists():
@@ -954,7 +955,7 @@ async def get_download_status(audiobook_id: str):
         raise HTTPException(status_code=404, detail="Audiobook not found")
     
     audiobook_dir = settings.AUDIOBOOKS_DIR / audiobook_id
-    combined_path = audiobook_dir / "combined_download.mp3"
+    combined_path = audiobook_dir / f"combined_download.{settings.AUDIO_FORMAT}"
     
     # If file exists but no progress tracked, it's ready
     if combined_path.exists():
@@ -985,19 +986,20 @@ async def download_audiobook(audiobook_id: str):
     
     audiobook = audiobooks_db[audiobook_id]
     audiobook_dir = settings.AUDIOBOOKS_DIR / audiobook_id
-    combined_path = audiobook_dir / "combined_download.mp3"
+    combined_path = audiobook_dir / f"combined_download.{settings.AUDIO_FORMAT}"
     
     if not combined_path.exists():
         raise HTTPException(status_code=400, detail="Download not prepared. Call /prepare-download first.")
     
     # Clean filename for download
     safe_title = "".join(c if c.isalnum() or c in ' -_' else '_' for c in audiobook.title)
-    combined_filename = f"{safe_title}.mp3"
+    combined_filename = f"{safe_title}.{settings.AUDIO_FORMAT}"
     
+    media_types = {"opus": "audio/opus", "mp3": "audio/mpeg"}
     return FileResponse(
         path=str(combined_path),
         filename=combined_filename,
-        media_type='audio/mpeg',
+        media_type=media_types.get(settings.AUDIO_FORMAT, "audio/mpeg"),
         headers={
             'Content-Disposition': f'attachment; filename="{combined_filename}"'
         }

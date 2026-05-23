@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     DEFAULT_MODEL: str = "tts-1"
     DEFAULT_VOICE: str = "alloy"
     CHUNK_SIZE: int = 500  # Characters per audio chunk (smaller = better TTS quality)
+    AUDIO_FORMAT: str = "opus"  # Audio format: "opus" or "mp3" (one-line rollback)
     
     model_config = ConfigDict(
         env_file=".env",

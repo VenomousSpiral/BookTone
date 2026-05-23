@@ -174,7 +174,7 @@ class AudioGenerator:
                 if model_voice_dir.exists():
                     # Build index of cached stream audio files
                     stream_cache_files = []
-                    for audio_file in model_voice_dir.glob("audio_*.mp3"):
+                    for audio_file in model_voice_dir.glob(f"audio_*.{settings.AUDIO_FORMAT}"):
                         try:
                             parts = audio_file.stem.split('_')
                             if len(parts) == 3 and parts[0] == 'audio':
@@ -244,7 +244,7 @@ class AudioGenerator:
                                     break
                         
                         # Load audio to get total duration
-                        cached_audio = AudioSegment.from_mp3(str(cached_path))
+                        cached_audio = AudioSegment.from_file(str(cached_path), format=settings.AUDIO_FORMAT)
                         total_dur = len(cached_audio) / 1000.0
                         total_text_len = sum(len(all_text_chunks[idx]) for idx in group)
                         
@@ -354,7 +354,7 @@ class AudioGenerator:
                 if (is_chunk_boundary or is_last_chunk or is_paused) and current_audio_segments:
                     # Calculate audio chunk index
                     audio_chunk_index = i // TEXT_CHUNKS_PER_AUDIO_FILE
-                    audio_chunk_filename = f"chunk_{audio_chunk_index:04d}.mp3"
+                    audio_chunk_filename = f"chunk_{audio_chunk_index:04d}.{settings.AUDIO_FORMAT}"
                     audio_chunk_path = audiobook_dir / audio_chunk_filename
                     
                     logger.debug("[DEBUG] Saving audio file chunk %d at text chunk %d/%d", audio_chunk_index, i+1, len(all_text_chunks))
@@ -364,7 +364,7 @@ class AudioGenerator:
                     
                     # Save to temp file first, then atomic rename
                     temp_path = audiobook_dir / f"temp_{audio_chunk_filename}"
-                    combined_audio.export(str(temp_path), format="mp3")
+                    combined_audio.export(str(temp_path), format=settings.AUDIO_FORMAT)
                     
                     import os
                     os.replace(str(temp_path), str(audio_chunk_path))
@@ -577,7 +577,7 @@ class AudioGenerator:
             
             # Save to temp file first, then atomic rename
             temp_path = audiobook_dir / f"temp_{chunk.filename}"
-            combined_audio.export(str(temp_path), format="mp3")
+            combined_audio.export(str(temp_path), format=settings.AUDIO_FORMAT)
             
             import os
             os.replace(str(temp_path), str(audio_chunk_path))
@@ -622,7 +622,7 @@ class AudioGenerator:
             audiobook.updated_at = datetime.now()
             
             # Delete cached combined download file if it exists (needs to be regenerated)
-            combined_download_path = audiobook_dir / "combined_download.mp3"
+            combined_download_path = audiobook_dir / f"combined_download.{settings.AUDIO_FORMAT}"
             if combined_download_path.exists():
                 combined_download_path.unlink()
                 logger.debug("[REGENERATE] Deleted cached combined download file")
@@ -651,7 +651,7 @@ class AudioGenerator:
     ) -> tuple[AudioSegment, float]:
         """Generate audio for a single text chunk"""
         # Create a temporary file for the audio
-        temp_file = settings.AUDIOBOOKS_DIR / f"temp_{uuid.uuid4()}.mp3"
+        temp_file = settings.AUDIOBOOKS_DIR / f"temp_{uuid.uuid4()}.{settings.AUDIO_FORMAT}"
         
         try:
             logger.debug("[DEBUG] Calling TTS API - model: %s, voice: %s, text length: %d", model, voice, len(text))
@@ -659,14 +659,15 @@ class AudioGenerator:
             response = client.audio.speech.create(
                 model=model,
                 voice=voice,
-                input=text
+                input=text,
+                response_format=settings.AUDIO_FORMAT
             )
             logger.debug("[DEBUG] TTS API response received")
             
             response.stream_to_file(str(temp_file))
             
             # Load with pydub to get duration
-            audio = AudioSegment.from_mp3(str(temp_file))
+            audio = AudioSegment.from_file(str(temp_file), format=settings.AUDIO_FORMAT)
             duration = len(audio) / 1000.0  # Convert to seconds
             
             return audio, duration
@@ -818,14 +819,14 @@ class AudioGenerator:
                 
                 if (is_chunk_boundary or is_last_chunk or is_paused) and current_audio_segments:
                     audio_chunk_index = current_audio_chunk_index + (i // TEXT_CHUNKS_PER_AUDIO_FILE)
-                    audio_chunk_filename = f"chunk_{audio_chunk_index:04d}.mp3"
+                    audio_chunk_filename = f"chunk_{audio_chunk_index:04d}.{settings.AUDIO_FORMAT}"
                     audio_chunk_path = audiobook_dir / audio_chunk_filename
                     
                     logger.debug("[APPEND] Saving audio chunk %s", audio_chunk_index)
                     
                     combined_audio = sum(current_audio_segments)
                     temp_path = audiobook_dir / f"temp_{audio_chunk_filename}"
-                    combined_audio.export(str(temp_path), format="mp3")
+                    combined_audio.export(str(temp_path), format=settings.AUDIO_FORMAT)
                     os.replace(str(temp_path), str(audio_chunk_path))
                     
                     audio_chunk_duration = len(combined_audio) / 1000.0
@@ -879,7 +880,7 @@ class AudioGenerator:
                 logger.debug("[APPEND] Audiobook append completed!")
             
             # Delete cached combined download
-            combined_download = audiobook_dir / "combined_download.mp3"
+            combined_download = audiobook_dir / f"combined_download.{settings.AUDIO_FORMAT}"
             if combined_download.exists():
                 combined_download.unlink()
                 logger.debug("[APPEND] Deleted cached combined download")

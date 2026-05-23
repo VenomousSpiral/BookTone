@@ -262,9 +262,10 @@ async def generate_audio(request: StreamAudioRequest):
         _stream_logger.debug("[AUDIO] Total request time: %dms", total_time*1000)
         
         # Return as streaming response
+        media_types = {"opus": "audio/opus", "mp3": "audio/mpeg"}
         return Response(
             content=audio_data,
-            media_type="audio/mpeg",
+            media_type=media_types.get(settings.AUDIO_FORMAT, "audio/mpeg"),
             headers={
                 "Content-Disposition": "inline",
                 "Cache-Control": "public, max-age=3600",  # Cache for 1 hour

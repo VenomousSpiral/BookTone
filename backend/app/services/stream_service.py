@@ -372,7 +372,7 @@ class StreamService:
         Returns audio bytes if found, None otherwise.
         """
         cache_dir = self._get_stream_cache_dir(ebook_path, model, voice)
-        audio_file = cache_dir / f"audio_{start_char}_{end_char}.mp3"
+        audio_file = cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
         if audio_file.exists():
             logger.debug("[STREAM CACHE] Found cached audio for chars %d-%d: %s", start_char, end_char, audio_file)
             return audio_file.read_bytes()
@@ -390,9 +390,9 @@ class StreamService:
             return None
         
         # Look for a cached file that contains our range
-        for audio_file in cache_model_dir.glob("audio_*.mp3"):
+        for audio_file in cache_model_dir.glob(f"audio_*.{settings.AUDIO_FORMAT}"):
             try:
-                # Parse the filename: audio_{start}_{end}.mp3
+                # Parse the filename: audio_{start}_{end}.opus
                 parts = audio_file.stem.split('_')
                 if len(parts) == 3 and parts[0] == 'audio':
                     cached_start = int(parts[1])
@@ -445,7 +445,8 @@ class StreamService:
             response = client.audio.speech.create(
                 model=api_model,
                 voice=voice,
-                input=text
+                input=text,
+                response_format=settings.AUDIO_FORMAT
             )
             
             # Read audio data
@@ -459,7 +460,7 @@ class StreamService:
                     try:
                         cache_dir = self._get_stream_cache_dir(ebook_path, model, voice)
                         cache_dir.mkdir(parents=True, exist_ok=True)
-                        audio_file = cache_dir / f"audio_{start_char}_{end_char}.mp3"
+                        audio_file = cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
                         audio_file.write_bytes(audio_data)
                         logger.debug("[STREAM CACHE] Saved audio for chars %d-%d: %s", start_char, end_char, audio_file)
                     except Exception as e:
@@ -550,7 +551,7 @@ class StreamService:
                     "size_mb": 0
                 }
                 
-                for audio_file in mv_dir.glob("audio_*.mp3"):
+                for audio_file in mv_dir.glob(f"audio_*.{settings.AUDIO_FORMAT}"):
                     cache_info["files"] += 1
                     cache_info["size_bytes"] += audio_file.stat().st_size
                 
@@ -607,7 +608,7 @@ class StreamService:
                 # Delete specific model/voice cache
                 mv_dir = base_cache_dir / f"{model}_{voice}"
                 if mv_dir.exists():
-                    for audio_file in mv_dir.glob("audio_*.mp3"):
+                    for audio_file in mv_dir.glob(f"audio_*.{settings.AUDIO_FORMAT}"):
                         deleted_size += audio_file.stat().st_size
                         audio_file.unlink()
                         deleted_files += 1
@@ -620,7 +621,7 @@ class StreamService:
                 # Delete entire cache directory
                 for mv_dir in base_cache_dir.iterdir():
                     if mv_dir.is_dir():
-                        for audio_file in mv_dir.glob("audio_*.mp3"):
+                        for audio_file in mv_dir.glob(f"audio_*.{settings.AUDIO_FORMAT}"):
                             deleted_size += audio_file.stat().st_size
                             audio_file.unlink()
                             deleted_files += 1

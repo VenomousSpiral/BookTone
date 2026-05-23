@@ -1171,7 +1171,7 @@ async function triggerDownload(id, title) {
         // This lets the browser handle the download natively without memory limits
         const a = document.createElement('a');
         a.href = downloadUrl;
-        a.download = `${title.replace(/[^a-zA-Z0-9\s-]/g, '_')}.mp3`;
+        a.download = `${title.replace(/[^a-zA-Z0-9\s-]/g, '_')}.opus`;
         a.style.display = 'none';
         document.body.appendChild(a);
         a.click();
