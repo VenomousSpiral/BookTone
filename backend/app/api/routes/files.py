@@ -1,18 +1,20 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Body
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from fastapi.responses import FileResponse
 from typing import List, Optional
 from pathlib import Path
 from pydantic import BaseModel
-import shutil
 import threading
 import time
 import logging
 from app.core.config import settings
 from app.services.file_manager import FileManager
+from app.services import stream_service
 from app.services.ebook_parser import EbookParser
+from app.utils.validators import validate_ebook_path
 
 router = APIRouter()
 file_manager = FileManager()
+logger = logging.getLogger(__name__)
 
 class MoveFileRequest(BaseModel):
     source: str
@@ -79,6 +81,271 @@ async def upload_file(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+# ========== DUPLICATE DETECTION & MERGE ENDPOINTS ==========
+
+@router.get("/upload-check")
+async def check_upload_duplicates(
+    filename: str = Query(..., description="Filename to check for duplicates"),
+    path: str = Query("", description="Target subdirectory"),
+):
+    """
+    Check if a file with the given filename already exists.
+    Returns duplicate info for the client to show a popup menu.
+    """
+    try:
+        duplicates = file_manager.find_duplicate_files(filename)
+        
+        # Check for active generation on each duplicate
+        for dup in duplicates:
+            active = file_manager.check_active_generation(dup["path"])
+            dup["generation_status"] = "in_progress" if active else "none"
+            if active:
+                dup["generation_info"] = active
+        
+        total_cache_size = sum(
+            d["parse_cache_size_mb"] + d["stream_cache_size_mb"]
+            for d in duplicates
+        )
+        
+        return {
+            "has_duplicates": len(duplicates) > 0,
+            "duplicates": duplicates,
+            "total_cache_size_mb": round(total_cache_size, 2)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/upload-with-replace-cache")
+async def upload_file_replace_cache(
+    file: UploadFile = File(...),
+    path: str = Query("", description="Target subdirectory"),
+    replace_paths: List[str] = Query(default=[""], description="Paths of files to replace caches for"),
+):
+    """
+    Upload a file, replace caches (rename to new hash) for listed files,
+    delete old files, save new file.
+    """
+    try:
+        # Save file atomically
+        file_path = file_manager.save_uploaded_file_atomic(file, path)
+        
+        # Compute new file hash
+        new_hash = file_manager._compute_file_hash(settings.EBOOKS_DIR / file_path)
+        
+        replaced_from = []
+        all_caches_replaced = {"parse_cache": False, "stream_cache": 0}
+        
+        for dup_path in replace_paths:
+            if not dup_path:
+                continue
+            
+            # Compute old file hash
+            old_file = settings.EBOOKS_DIR / dup_path
+            if not old_file.exists():
+                logger.warning(f"[MERGE] Duplicate file not found: {dup_path}")
+                continue
+            
+            old_hash = file_manager._compute_file_hash(old_file)
+            
+            # Replace caches
+            cache_result = file_manager.replace_cache_to_new_hash(
+                old_ebook_path=dup_path,
+                new_ebook_path=str(file_path),
+                old_file_hash=old_hash,
+                new_file_hash=new_hash,
+            )
+            
+            # Merge results
+            if cache_result["parse_cache"]:
+                all_caches_replaced["parse_cache"] = True
+            all_caches_replaced["stream_cache"] += cache_result["stream_cache"]
+            if cache_result["errors"]:
+                all_caches_replaced["errors"] = all_caches_replaced.get("errors", []) + cache_result["errors"]
+            
+            replaced_from.append(dup_path)
+            
+            # Delete old file (skip if same path as new file - already overwritten)
+            if Path(dup_path).resolve() != Path(file_path).resolve():
+                file_manager.delete_file(dup_path)
+                logger.info(f"[MERGE] Replaced caches and deleted: {dup_path}")
+            else:
+                logger.info(f"[MERGE] Replaced caches, file already overwritten: {dup_path}")
+        
+        # Background pre-parse
+        def _pre_parse():
+            _logger = logging.getLogger("ebook_parser")
+            _logger.debug("[UPLOAD] Pre-parse thread STARTED: file=%s", file_path)
+            t0 = time.time()
+            try:
+                parser = EbookParser()
+                parser.parse_and_cache(file_path, with_images=False)
+                if file_path.suffix.lower() in ('.epub', '.pdf'):
+                    parser.parse_and_cache(file_path, with_images=True)
+                elapsed = time.time() - t0
+                _logger.debug("[UPLOAD] Pre-parse thread COMPLETED: file=%s took=%.2fs", file_path, elapsed)
+            except Exception as e:
+                elapsed = time.time() - t0
+                _logger.error("[UPLOAD] Pre-parse thread FAILED: file=%s took=%.2fs error=%s", file_path, elapsed, e)
+        
+        threading.Thread(target=_pre_parse, daemon=True).start()
+        
+        return {
+            "message": "File uploaded and caches replaced",
+            "filename": file.filename,
+            "path": str(file_path),
+            "replaced_from": replaced_from,
+            "caches_replaced": all_caches_replaced,
+            "old_file_deleted": len(replaced_from) > 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/upload-with-copy-cache")
+async def upload_file_copy_cache(
+    file: UploadFile = File(...),
+    path: str = Query("", description="Target subdirectory"),
+    copy_paths: List[str] = Query(default=[""], description="Paths of files to copy caches from"),
+):
+    """
+    Upload a file, copy caches from listed files into new dirs,
+    delete old files, save new file.
+    """
+    try:
+        # Save file atomically
+        file_path = file_manager.save_uploaded_file_atomic(file, path)
+        
+        # Compute new file hash
+        new_hash = file_manager._compute_file_hash(settings.EBOOKS_DIR / file_path)
+        
+        copied_from = []
+        all_caches_copied = {"parse_cache": False, "stream_cache": 0, "bytes_copied": 0}
+        
+        for dup_path in copy_paths:
+            if not dup_path:
+                continue
+            
+            # Compute old file hash
+            old_file = settings.EBOOKS_DIR / dup_path
+            if not old_file.exists():
+                logger.warning(f"[MERGE] Duplicate file not found: {dup_path}")
+                continue
+            
+            old_hash = file_manager._compute_file_hash(old_file)
+            
+            # Copy caches
+            cache_result = file_manager.copy_cache_to_new_hash(
+                old_ebook_path=dup_path,
+                new_ebook_path=str(file_path),
+                old_file_hash=old_hash,
+                new_file_hash=new_hash,
+            )
+            
+            # Merge results
+            if cache_result["parse_cache"]:
+                all_caches_copied["parse_cache"] = True
+            all_caches_copied["stream_cache"] += cache_result["stream_cache"]
+            all_caches_copied["bytes_copied"] += cache_result["bytes_copied"]
+            if cache_result["errors"]:
+                all_caches_copied["errors"] = all_caches_copied.get("errors", []) + cache_result["errors"]
+            
+            copied_from.append(dup_path)
+            
+            # Delete old file (skip if same path as new file - already overwritten)
+            if Path(dup_path).resolve() != Path(file_path).resolve():
+                file_manager.delete_file(dup_path)
+                logger.info(f"[MERGE] Copied caches and deleted: {dup_path}")
+            else:
+                logger.info(f"[MERGE] Copied caches, file already overwritten: {dup_path}")
+        
+        # Background pre-parse
+        def _pre_parse():
+            _logger = logging.getLogger("ebook_parser")
+            _logger.debug("[UPLOAD] Pre-parse thread STARTED: file=%s", file_path)
+            t0 = time.time()
+            try:
+                parser = EbookParser()
+                parser.parse_and_cache(file_path, with_images=False)
+                if file_path.suffix.lower() in ('.epub', '.pdf'):
+                    parser.parse_and_cache(file_path, with_images=True)
+                elapsed = time.time() - t0
+                _logger.debug("[UPLOAD] Pre-parse thread COMPLETED: file=%s took=%.2fs", file_path, elapsed)
+            except Exception as e:
+                elapsed = time.time() - t0
+                _logger.error("[UPLOAD] Pre-parse thread FAILED: file=%s took=%.2fs error=%s", file_path, elapsed, e)
+        
+        threading.Thread(target=_pre_parse, daemon=True).start()
+        
+        return {
+            "message": "File uploaded and caches copied",
+            "filename": file.filename,
+            "path": str(file_path),
+            "copied_from": copied_from,
+            "caches_copied": all_caches_copied,
+            "old_file_deleted": len(copied_from) > 0,
+            "old_cache_preserved": True
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/upload-ignore-cache")
+async def upload_file_ignore_cache(
+    file: UploadFile = File(...),
+    path: str = Query("", description="Target subdirectory"),
+    ignored_paths: List[str] = Query(default=[""], description="Paths that were ignored"),
+):
+    """
+    Upload a file normally. Old files with same name are left untouched,
+    including their caches. New file gets fresh caches on first play.
+    """
+    try:
+        # Save file atomically
+        file_path = file_manager.save_uploaded_file_atomic(file, path)
+        
+        # Background pre-parse
+        def _pre_parse():
+            _logger = logging.getLogger("ebook_parser")
+            _logger.debug("[UPLOAD] Pre-parse thread STARTED: file=%s", file_path)
+            t0 = time.time()
+            try:
+                parser = EbookParser()
+                parser.parse_and_cache(file_path, with_images=False)
+                if file_path.suffix.lower() in ('.epub', '.pdf'):
+                    parser.parse_and_cache(file_path, with_images=True)
+                elapsed = time.time() - t0
+                _logger.debug("[UPLOAD] Pre-parse thread COMPLETED: file=%s took=%.2fs", file_path, elapsed)
+            except Exception as e:
+                elapsed = time.time() - t0
+                _logger.error("[UPLOAD] Pre-parse thread FAILED: file=%s took=%.2fs error=%s", file_path, elapsed, e)
+        
+        threading.Thread(target=_pre_parse, daemon=True).start()
+        
+        return {
+            "message": "File uploaded (caches ignored)",
+            "filename": file.filename,
+            "path": str(file_path),
+            "ignored_files": ignored_paths,
+            "old_file_preserved": len(ignored_paths) > 0
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/cleanup-temp")
+async def cleanup_temp_files():
+    """Clean up temporary upload files older than 1 hour."""
+    try:
+        removed = file_manager.cleanup_temp_files(max_age_seconds=3600)
+        return {
+            "message": f"Cleaned up {removed} temp file(s)",
+            "removed": removed
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @router.delete("/delete")
 async def delete_file(file_path: str):
     """Delete an ebook file (with cache cleanup)"""
@@ -102,6 +369,10 @@ async def move_file(request: MoveFileRequest):
     """Move a file to a different directory"""
     try:
         new_path = file_manager.move_file(request.source, request.destination)
+
+        # Migrate bookmarks/progress to the new path
+        stream_service.rename_progress(request.source, str(new_path))
+
         return {
             "message": "File moved successfully",
             "old_path": request.source,

@@ -1,12 +1,18 @@
-// ========== FILE MANAGER ==========
-// Consolidated state to avoid conflicts
+// file-manager.js — File browsing, upload, folders, move, delete, caching
+// Depends on: app.js (apiCall, Helpers, showGenerateModal, etc.)
+
+// ========== STATE ==========
+
 const fileState = {
     current: '',
     all: [],
-    moveMenu: { visible: false, source: '', isDirectory: false, dest: '' }
+    moveMenu: { visible: false, source: '', isDirectory: false, dest: '' },
+    activeEbookPath: null,
+    pollInterval: null
 };
 
 // ========== CORE FILE OPERATIONS ==========
+
 async function refreshFiles() {
     const container = document.getElementById('fileList');
     container.innerHTML = '<div class="loading">Loading files...</div>';
@@ -29,42 +35,17 @@ function navigateToDirectory(path) {
 function updateBreadcrumb() {
     const breadcrumb = document.getElementById('breadcrumb');
     if (!breadcrumb) return;
+    renderBreadcrumb(breadcrumb, fileState.current, navigateToDirectory, '\uD83C\uDFE0 Home');
+}
 
-    // Reuse Helpers.renderBreadcrumb from app.js if available, otherwise inline
-    if (window.Helpers && Helpers.renderBreadcrumb) {
-        Helpers.renderBreadcrumb(breadcrumb, fileState.current, navigateToDirectory, '🏠 Home');
-    } else {
-        // Inline fallback
-        breadcrumb.innerHTML = '';
-        const homeLink = document.createElement('span');
-        homeLink.className = 'breadcrumb-item';
-        homeLink.textContent = '🏠 Home';
-        homeLink.onclick = () => navigateToDirectory('');
-        breadcrumb.appendChild(homeLink);
+// ========== SEARCH ==========
 
-        if (fileState.current) {
-            const parts = fileState.current.split('/').filter(p => p);
-            let accumulated = '';
-            parts.forEach(part => {
-                breadcrumb.appendChild(document.createTextNode(' / '));
-                accumulated += (accumulated ? '/' : '') + part;
-                const link = document.createElement('span');
-                link.className = 'breadcrumb-item';
-                link.textContent = part;
-                const p = accumulated;
-                link.onclick = () => navigateToDirectory(p);
-                breadcrumb.appendChild(link);
-            });
-        }
-    }
+/** Called on every keystroke in the search box — delegates to sortFiles */
+function filterFiles() {
+    sortFiles();
 }
 
 // ========== FILTERING & SORTING ==========
-function filterFiles() {
-    const searchTerm = document.getElementById('fileSearch').value.toLowerCase();
-    const filtered = fileState.all.filter(file => file.name.toLowerCase().includes(searchTerm));
-    displayFiles(filtered);
-}
 
 async function sortFiles() {
     const sortBy = document.getElementById('fileSort').value;
@@ -76,7 +57,6 @@ async function sortFiles() {
             const prefs = await fetch('/api/audiobooks/preferences/get').then(r => r.json());
             filtered = applySortToFiles(filtered, 'recent', prefs);
         } catch (error) {
-            console.log('No preferences found, using alphabetical order');
             filtered = applySortToFiles(filtered, 'name');
         }
     } else {
@@ -88,7 +68,6 @@ async function sortFiles() {
 
 function applySortToFiles(files, sortBy, userPrefs = null) {
     const sorted = [...files];
-
     sorted.sort((a, b) => {
         if (a.is_directory && !b.is_directory) return -1;
         if (!a.is_directory && b.is_directory) return 1;
@@ -98,7 +77,7 @@ function applySortToFiles(files, sortBy, userPrefs = null) {
                 if (userPrefs?.audiobooks) {
                     const aTime = userPrefs.audiobooks[a.path]?.last_played || 0;
                     const bTime = userPrefs.audiobooks[b.path]?.last_played || 0;
-                    if (aTime === 0 && bTime === 0) return b.modified - a.modified; // Sort unplayed by date added (newest first)
+                    if (aTime === 0 && bTime === 0) return b.modified - a.modified;
                     return bTime - aTime;
                 }
                 return a.name.localeCompare(b.name);
@@ -111,19 +90,17 @@ function applySortToFiles(files, sortBy, userPrefs = null) {
                 return a.name.localeCompare(b.name);
         }
     });
-
     return sorted;
 }
 
 // ========== DISPLAY ==========
+
 function displayFiles(files) {
     const container = document.getElementById('fileList');
-
     if (files.length === 0) {
         container.innerHTML = '<div class="loading">No files found. Upload some ebooks to get started!</div>';
         return;
     }
-
     container.innerHTML = '';
     files.forEach(file => container.appendChild(createFileItem(file)));
 }
@@ -132,7 +109,7 @@ function createFileItem(file) {
     const item = document.createElement('div');
     item.className = 'file-item';
 
-    const icon = file.is_directory ? '📁' : '📄';
+    const icon = file.is_directory ? '\uD83D\uDCC1' : '\uD83D\uDCC4';
     const size = file.is_directory ? '' : formatBytes(file.size);
     const date = new Date(file.modified * 1000).toLocaleDateString();
     const isEbook = !file.is_directory && /\.(epub|txt|pdf)$/i.test(file.name);
@@ -150,117 +127,412 @@ function createFileItem(file) {
 
     fileInfo.innerHTML = `
         <div class="file-name">${icon} ${file.name}</div>
-        <div class="file-meta">${size} ${size && date ? '•' : ''} ${date}</div>
+        <div class="file-meta">${size} ${size && date ? '\u2022' : ''} ${date}</div>
     `;
 
     // Actions section
     const fileActions = document.createElement('div');
     fileActions.className = 'file-actions';
 
-    // Generate button for files
     if (!file.is_directory) {
-        const genBtn = createButton('btn-small', '🎵', (e) => {
+        const genBtn = createButton('btn-small', '\uD83C\uDFB5', (e) => {
             e.stopPropagation();
             showGenerateModal(file.path);
         });
         fileActions.appendChild(genBtn);
     }
 
-    // Settings menu
     const menuId = `file-${file.path.replace(/[^a-zA-Z0-9]/g, '_')}`;
-    const settingsBtn = createButton('btn-small settings-btn', '⚙️', (e) => {
+    const settingsBtn = createButton('btn-small settings-btn', '\u2699\uFE0F', (e) => {
         e.stopPropagation();
-        toggleFileSettingsMenu(e, menuId);
+        openFileSettingsPanel(file);
     });
     fileActions.appendChild(settingsBtn);
-
-    const settingsMenu = createSettingsMenu(file, menuId);
-    fileActions.appendChild(settingsMenu);
 
     item.appendChild(fileInfo);
     item.appendChild(fileActions);
     return item;
 }
 
-function createSettingsMenu(file, menuId) {
-    const menu = document.createElement('div');
-    menu.id = `settings-${menuId}`;
-    menu.className = 'settings-menu';
-    menu.style.display = 'none';
+// ========== FILE SETTINGS PANEL ==========
 
-    const actions = [];
+function openFileSettingsPanel(file) {
+    const existing = document.getElementById('fileSettingsPanel');
+    if (existing) existing.remove();
 
-    // Download (files only)
-    if (!file.is_directory) {
-        actions.push(createMenuButton('⬇️ Download', () => {
-            downloadFile(file.path);
-            closeAllFileSettingsMenus();
-        }));
+    const panel = document.createElement('div');
+    panel.id = 'fileSettingsPanel';
+    panel.className = 'modal';
+    panel.style.cssText = 'display: flex; z-index: 10001;';
+    document.body.appendChild(panel);
+
+    const isEbook = !file.is_directory && /\.(epub|txt|pdf)$/i.test(file.name);
+    const bookTitle = file.name;
+
+    panel.innerHTML = `
+        <div class="modal-content" style="max-width: 800px; width: 95%; max-height: 90vh; overflow-y: auto; margin: auto;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--border-color);">
+                <div>
+                    <h2 style="margin: 0 0 5px 0; font-size: 24px;">${isEbook ? '\uD83C\uDFB5' : '\uD83D\uDCC1'} ${bookTitle}</h2>
+                    <p style="margin: 0; color: var(--text-secondary); font-size: 14px;">${file.is_directory ? 'Folder' : 'File'} \u00B7 ${file.is_directory ? '' : formatBytes(file.size)}</p>
+                </div>
+                <button onclick="closeFileSettingsPanel()" style="background: none; border: none; font-size: 28px; cursor: pointer; color: var(--text-secondary); padding: 5px 10px;">\u2715</button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 25px;">
+                ${!file.is_directory ? `
+                    <button onclick="downloadFile('${file.path}'); closeFileSettingsPanel();" class="btn" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                        <span style="font-size: 24px;">\u2B07\uFE0F</span><span>Download</span>
+                    </button>
+                ` : ''}
+                ${isEbook ? `
+                    <button onclick="showGenerateCacheModal('${file.path}')" class="btn btn-primary" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                        <span style="font-size: 24px;">\uD83C\uDFB5</span><span>Generate Audiobook</span>
+                    </button>
+                ` : ''}
+                <button onclick="showMoveMenu('${file.path}', ${file.is_directory}); closeFileSettingsPanel();" class="btn" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                    <span style="font-size: 24px;">\u2194\uFE0F</span><span>Move</span>
+                </button>
+                <button onclick="deleteFile('${file.path}', ${file.is_directory}); closeFileSettingsPanel();" class="btn btn-danger" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                    <span style="font-size: 24px;">\uD83D\uDDD1\uFE0F</span><span>Delete</span>
+                </button>
+            </div>
+
+            ${isEbook ? `
+                <div id="audiobookManagementSection">
+                    <h3 style="margin: 0 0 15px 0; font-size: 18px;">\uD83D\udcDA Audiobook Cache Management</h3>
+                    <div id="audiobookContent" style="padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+                        <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Loading cache info...</div>
+                    </div>
+                </div>
+            ` : ''}
+        </div>
+    `;
+
+    panel.style.display = 'flex';
+    panel.classList.add('active');
+
+    if (isEbook) {
+        loadAndRenderAudiobookStatus(file.path);
+    }
+}
+
+function closeFileSettingsPanel() {
+    if (fileState.pollInterval) {
+        clearInterval(fileState.pollInterval);
+        fileState.pollInterval = null;
+    }
+    fileState.activeEbookPath = null;
+
+    const panel = document.getElementById('fileSettingsPanel');
+    if (panel) {
+        panel.style.display = 'none';
+        panel.classList.remove('active');
+        setTimeout(() => panel.remove(), 300);
+    }
+}
+
+// ========== AUDIOWBOOK CACHE STATUS (rendered in settings panel) ==========
+
+function loadAndRenderAudiobookStatus(ebookPath) {
+    const contentEl = document.getElementById('audiobookContent');
+    if (!contentEl) return;
+
+    fetch(`${API_BASE}/stream/cache-info?ebook_path=${encodeURIComponent(ebookPath)}`)
+        .then(r => r.json())
+        .then(info => {
+            if (!info || !info.has_cache || info.caches.length === 0) {
+                contentEl.innerHTML = `
+                    <div style="text-align: center; padding: 20px;">
+                        <p style="color: var(--text-secondary); margin-bottom: 15px;">No audiobook cache found for this ebook</p>
+                        <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 13px;">${info?.total_chunks || '?'} chunks available for generation</p>
+                        <button class="btn btn-primary" style="padding: 10px 20px;" onclick="showGenerateCacheModal('${ebookPath}')">
+                            \uD83C\uDFB5 Generate Audiobook
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            const totalCacheSize = info.caches.reduce((sum, c) => sum + c.size_mb, 0);
+            html += `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 13px; color: var(--text-secondary);">
+                    <span>\uD83D\udcDA ${info.title}</span>
+                    <span>${info.total_chunks} chunks \u00B7 ${totalCacheSize.toFixed(1)} MB total</span>
+                </div>
+            `;
+
+            info.caches.forEach(cache => {
+                const statusIcon = cache.status === 'completed' ? '\u2705' :
+                                   cache.status === 'in_progress' ? '\u23F3' :
+                                   cache.status === 'paused' ? '\u23F8\uFE0F' : '\u274C';
+
+                let progressHtml = '';
+                if (cache.status === 'in_progress' && cache.total_chunks > 0) {
+                    const progressPct = Math.round(cache.completed_chunks / cache.total_chunks * 100);
+                    progressHtml = `
+                        <div style="margin-top: 6px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <span style="font-size: 11px; color: var(--text-secondary);">${cache.completed_chunks}/${cache.total_chunks} chunks \u00B7 ${progressPct}%</span>
+                                <span style="font-size: 11px; color: #4fc3f7;">${cache.missing_count} remaining</span>
+                            </div>
+                            <div style="height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+                                <div style="height: 100%; width: ${progressPct}%; background: linear-gradient(90deg, #4fc3f7, #29b6f6); border-radius: 2px; transition: width 0.3s;"></div>
+                            </div>
+                        </div>
+                    `;
+                } else if (cache.status === 'completed') {
+                    progressHtml = `<div style="margin-top: 6px;"><span style="font-size: 11px; color: #66bb6a;">\u2705 All ${cache.completed_chunks} chunks complete \u00B7 ${cache.size_mb} MB</span></div>`;
+                } else if (cache.status === 'not_started') {
+                    progressHtml = `<div style="margin-top: 6px;"><span style="font-size: 11px; color: var(--text-secondary);">\u23F8\uFE0F Not started yet</span></div>`;
+                }
+
+                let actionButtons = '';
+                if (cache.status === 'completed') {
+                    actionButtons += `
+                        <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="prepareAudiobookDownload('${ebookPath}', '${cache.model}', '${cache.voice}')">\u2B07\uFE0F Download OPUS</button>
+                        <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheRegenerate('${ebookPath}', '${cache.model}', '${cache.voice}')">\uD83D\uDD04 Regenerate</button>
+                    `;
+                } else if (cache.status === 'in_progress') {
+                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCachePause('${ebookPath}', '${cache.model}', '${cache.voice}')">\u23F8\uFE0F Pause</button>`;
+                } else if (cache.status === 'paused' || cache.status === 'failed') {
+                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheResume('${ebookPath}', '${cache.model}', '${cache.voice}')">\u25B6\uFE0F Resume Generation</button>`;
+                }
+                actionButtons += `<button class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheDelete('${ebookPath}', '${cache.model}', '${cache.voice}')">\uD83D\uDDD1\uFE0F Delete Cache</button>`;
+
+                html += `
+                    <div style="margin-bottom: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid ${cache.status === 'completed' ? '#66bb6a' : cache.status === 'in_progress' ? '#4fc3f7' : '#f44'};">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                            <div>
+                                <span style="font-size: 16px; font-weight: bold;">${statusIcon} ${cache.model}</span>
+                                <span style="color: var(--text-secondary); margin-left: 8px;">/ ${cache.voice}</span>
+                            </div>
+                            <span style="font-size: 12px; color: var(--text-secondary);">${cache.size_mb} MB</span>
+                        </div>
+                        ${progressHtml}
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px;">${actionButtons}</div>
+                    </div>
+                `;
+            });
+
+            html += `
+                <div style="text-align: center; margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
+                    <button class="btn btn-primary" style="padding: 10px 20px;" onclick="showGenerateCacheModal('${ebookPath}')">
+                        \u2795 Generate New Audiobook
+                    </button>
+                </div>
+            `;
+
+            contentEl.innerHTML = html;
+
+            const hasInProgress = info.caches.some(c => c.status === 'in_progress');
+            if (hasInProgress) {
+                if (fileState.pollInterval) clearInterval(fileState.pollInterval);
+                fileState.activeEbookPath = ebookPath;
+                fileState.pollInterval = setInterval(() => loadAndRenderAudiobookStatus(ebookPath), 1500);
+            } else {
+                if (fileState.pollInterval) {
+                    clearInterval(fileState.pollInterval);
+                    fileState.pollInterval = null;
+                }
+                fileState.activeEbookPath = null;
+            }
+        })
+        .catch(() => {
+            contentEl.innerHTML = '<div style="text-align: center; padding: 20px; color: #f44;">Failed to load cache info</div>';
+        });
+}
+
+// ========== CACHE-FIRST GENERATION MODAL (consolidated from 2 duplicates) ==========
+
+function showGenerateCacheModal(ebookPath) {
+    let modal = document.getElementById('generateCacheModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'generateCacheModal';
+        modal.className = 'modal';
+        modal.style.display = 'none';
+        document.body.appendChild(modal);
     }
 
-    // Move
-    actions.push(createMenuButton('↔️ Move', () => {
-        showMoveMenu(file.path, file.is_directory);
-        closeAllFileSettingsMenus();
-    }));
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+    modal.style.zIndex = '10003';
 
-    // Delete
-    actions.push(createMenuButton('🗑️ Delete', () => {
-        deleteFile(file.path, file.is_directory);
-        closeAllFileSettingsMenus();
-    }, 'btn-danger'));
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <h2>\uD83C\uDFB5 Generate Audiobook</h2>
+            <p style="margin-bottom: 15px; color: var(--text-secondary);">${ebookPath}</p>
 
-    actions.forEach(btn => menu.appendChild(btn));
-    return menu;
+            <label for="genCacheModel">Model:</label>
+            <select id="genCacheModel" required onchange="updateGenCacheVoices()" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
+                <option value="">Loading...</option>
+            </select>
+
+            <label for="genCacheVoice">Voice:</label>
+            <select id="genCacheVoice" required style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
+                <option value="">Select model first</option>
+            </select>
+
+            <label for="genCacheInstructions">Instructions (optional):</label>
+            <textarea id="genCacheInstructions" rows="3" placeholder="e.g., Speak in a cheerful tone." style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; font-size: inherit; resize: vertical;"></textarea>
+
+            <div class="modal-buttons">
+                <button type="button" onclick="handleCacheGenerate('${ebookPath}')" class="btn btn-primary">\uD83C\uDFB5 Generate</button>
+                <button type="button" onclick="closeGenerateCacheModal()" class="btn">Cancel</button>
+            </div>
+        </div>
+    `;
+
+    loadGenCacheModels();
 }
 
-function createButton(className, text, onClick) {
-    const btn = document.createElement('button');
-    btn.className = className;
-    btn.textContent = text;
-    btn.addEventListener('click', onClick);
-    return btn;
+async function loadGenCacheModels() {
+    try {
+        const res = await fetch(`${API_BASE}/openai/models`);
+        const models = await res.json();
+        const select = document.getElementById('genCacheModel');
+        select.innerHTML = '';
+        for (const [name, model] of Object.entries(models)) {
+            select.appendChild(createOption(name, model.name));
+        }
+        if (select.options.length > 0) updateGenCacheVoices();
+    } catch (e) {
+        document.getElementById('genCacheModel').innerHTML = '<option value="">Error loading models</option>';
+    }
 }
 
-function createMenuButton(text, onClick, extraClass = '') {
-    const btn = document.createElement('button');
-    btn.className = `settings-menu-item ${extraClass}`.trim();
-    btn.textContent = text;
-    btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        onClick();
-    });
-    return btn;
+function updateGenCacheVoices() {
+    const model = document.getElementById('genCacheModel').value;
+    const voiceSelect = document.getElementById('genCacheVoice');
+    voiceSelect.innerHTML = '';
+
+    if (!model) {
+        voiceSelect.innerHTML = '<option value="">Select model first</option>';
+        return;
+    }
+
+    fetch(`${API_BASE}/openai/models/${model}/voices`)
+        .then(r => r.json())
+        .then(voices => {
+            voices.forEach(voice => voiceSelect.appendChild(createOption(voice, voice)));
+        })
+        .catch(() => {
+            voiceSelect.innerHTML = '<option value="">Error loading voices</option>';
+        });
+}
+
+function closeGenerateCacheModal() {
+    const modal = document.getElementById('generateCacheModal');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.classList.remove('active');
+    }
+}
+
+async function handleCacheGenerate(ebookPath) {
+    const model = document.getElementById('genCacheModel').value;
+    const voice = document.getElementById('genCacheVoice').value;
+    const instructions = document.getElementById('genCacheInstructions').value;
+
+    if (!model || !voice) {
+        showToast('Please select model and voice');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/stream/generate-cache`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ebook_path: ebookPath,
+                model,
+                voice,
+                instructions: instructions || undefined
+            })
+        });
+
+        if (!res.ok) throw new Error('Failed to start generation');
+
+        const data = await res.json();
+        showToast(`Generation started: ${data.model}/${data.voice}`);
+        closeGenerateCacheModal();
+        loadAndRenderAudiobookStatus(ebookPath);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+    }
+}
+
+// ========== CACHE MANAGEMENT HANDLERS ==========
+
+async function handleCacheRegenerate(ebookPath, model, voice) {
+    if (!confirm(`Regenerate audiobook cache for ${model}/${voice}?\nThis will delete the existing cache and start fresh.`)) return;
+
+    try {
+        const delRes = await fetch(`${API_BASE}/stream/cache?ebook_path=${encodeURIComponent(ebookPath)}&model=${model}&voice=${voice}`, {
+            method: 'DELETE'
+        });
+        if (!delRes.ok) throw new Error('Failed to delete cache');
+
+        const genRes = await fetch(`${API_BASE}/stream/generate-cache`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ebook_path: ebookPath, model, voice })
+        });
+        if (!genRes.ok) throw new Error('Failed to start generation');
+
+        showToast('Regenerating audiobook...');
+        loadAndRenderAudiobookStatus(ebookPath);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+    }
+}
+
+async function handleCacheDelete(ebookPath, model, voice) {
+    if (!confirm(`Delete audiobook cache for ${model}/${voice}?\nThis will remove all generated audio files.`)) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/stream/cache?ebook_path=${encodeURIComponent(ebookPath)}&model=${model}&voice=${voice}`, {
+            method: 'DELETE'
+        });
+        if (!res.ok) throw new Error('Failed to delete cache');
+
+        const data = await res.json();
+        showToast(`Cache deleted: ${data.deleted_size_mb} MB freed`);
+        loadAndRenderAudiobookStatus(ebookPath);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+    }
+}
+
+async function handleCachePause(ebookPath, model, voice) {
+    try {
+        await fetch(`${API_BASE}/stream/cache-pause?ebook_path=${encodeURIComponent(ebookPath)}&model=${model}&voice=${voice}`, {
+            method: 'POST'
+        });
+        showToast('Generation paused');
+        loadAndRenderAudiobookStatus(ebookPath);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+    }
+}
+
+async function handleCacheResume(ebookPath, model, voice) {
+    try {
+        const res = await fetch(`${API_BASE}/stream/cache-resume?ebook_path=${encodeURIComponent(ebookPath)}&model=${model}&voice=${voice}`, {
+            method: 'POST'
+        });
+        if (!res.ok) throw new Error('Failed to resume');
+
+        showToast('Resuming generation...');
+        loadAndRenderAudiobookStatus(ebookPath);
+    } catch (e) {
+        showToast('Error: ' + e.message);
+    }
 }
 
 // ========== FILE OPERATIONS ==========
-async function handleFileUpload(e) {
-    const files = e.target.files;
-    if (!files.length) return;
-
-    for (const file of files) {
-        const formData = new FormData();
-        formData.append('file', file);
-
-        try {
-            await fetch(`${API_BASE}/files/upload?path=${encodeURIComponent(fileState.current)}`, {
-                method: 'POST',
-                body: formData
-            });
-            // Track as recently read when uploading an ebook
-            const isEbook = /\.(epub|txt|pdf)$/i.test(file.name);
-            if (isEbook) {
-                const filePath = fileState.current ? `${fileState.current}/${file.name}` : file.name;
-                await trackFileAsRecentlyRead(filePath);
-            }
-        } catch (error) {
-            alert(`Error uploading ${file.name}: ${error.message}`);
-        }
-    }
-
-    e.target.value = '';
-    refreshFiles();
-}
 
 async function deleteFile(filePath, isDirectory) {
     const type = isDirectory ? 'directory' : 'file';
@@ -268,7 +540,7 @@ async function deleteFile(filePath, isDirectory) {
 
     try {
         await apiCall(`/files/delete?file_path=${encodeURIComponent(filePath)}`, { method: 'DELETE' });
-        await refreshFiles();
+        refreshFiles();
     } catch (error) {
         console.error('Delete error:', error);
     }
@@ -292,7 +564,7 @@ async function createDir(path) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path })
         });
-        await refreshFiles();
+        refreshFiles();
     } catch (error) {
         console.error('Create directory error:', error);
     }
@@ -310,15 +582,16 @@ async function moveFile(source, destination) {
         if (isEbook) {
             const fileName = source.split('/').pop();
             const newPath = destination ? `${destination}/${fileName}` : fileName;
-            await trackFileAsRecentlyRead(newPath);
+            await trackAsRecentlyRead(newPath);
         }
-        await refreshFiles();
+        refreshFiles();
     } catch (error) {
         console.error('Move error:', error);
     }
 }
 
 // ========== MOVE MENU ==========
+
 function showMoveMenu(filePath, isDirectory) {
     fileState.moveMenu = { visible: true, source: filePath, isDirectory, dest: '' };
 
@@ -331,7 +604,7 @@ function showMoveMenu(filePath, isDirectory) {
             <div id="moveNavBreadcrumb" class="breadcrumb"></div>
             <div id="moveNavList" style="max-height:300px;overflow-y:auto;margin-bottom:15px;"></div>
             <div class="modal-buttons">
-                <button id="moveNewFolderBtn" class="btn">📁 New Folder</button>
+                <button id="moveNewFolderBtn" class="btn">\uD83D\uDCC1 New Folder</button>
                 <button id="moveHereBtn" class="btn btn-primary">Move Here</button>
                 <button id="moveCancelBtn" class="btn btn-danger">Cancel</button>
             </div>
@@ -368,38 +641,11 @@ async function renderMoveNav() {
     const breadcrumb = document.getElementById('moveNavBreadcrumb');
     if (!navList || !breadcrumb) return;
 
-    // Breadcrumb
-    if (window.Helpers && Helpers.renderBreadcrumb) {
-        Helpers.renderBreadcrumb(breadcrumb, fileState.moveMenu.dest, (path) => {
-            fileState.moveMenu.dest = path;
-            renderMoveNav();
-        });
-    } else {
-        // Inline fallback
-        breadcrumb.innerHTML = '';
-        const homeLink = document.createElement('span');
-        homeLink.className = 'breadcrumb-item';
-        homeLink.textContent = '🏠 Home';
-        homeLink.onclick = () => { fileState.moveMenu.dest = ''; renderMoveNav(); };
-        breadcrumb.appendChild(homeLink);
+    renderBreadcrumb(breadcrumb, fileState.moveMenu.dest, (path) => {
+        fileState.moveMenu.dest = path;
+        renderMoveNav();
+    });
 
-        if (fileState.moveMenu.dest) {
-            const parts = fileState.moveMenu.dest.split('/').filter(p => p);
-            let accumulatedPath = '';
-            parts.forEach(part => {
-                breadcrumb.appendChild(document.createTextNode(' / '));
-                accumulatedPath += (accumulatedPath ? '/' : '') + part;
-                const link = document.createElement('span');
-                link.className = 'breadcrumb-item';
-                link.textContent = part;
-                const path = accumulatedPath;
-                link.onclick = () => { fileState.moveMenu.dest = path; renderMoveNav(); };
-                breadcrumb.appendChild(link);
-            });
-        }
-    }
-
-    // Directory list
     navList.innerHTML = '';
     try {
         const data = await apiCall(`/files/list?path=${encodeURIComponent(fileState.moveMenu.dest)}`);
@@ -411,7 +657,7 @@ async function renderMoveNav() {
             dirs.forEach(dir => {
                 const item = document.createElement('div');
                 item.className = 'file-item';
-                item.innerHTML = `<div class="file-info"><div class="file-name">📁 ${dir.name}</div></div>`;
+                item.innerHTML = `<div class="file-info"><div class="file-name">\uD83D\uDCC1 ${dir.name}</div></div>`;
                 item.onclick = () => {
                     fileState.moveMenu.dest = dir.path;
                     renderMoveNav();
@@ -420,13 +666,12 @@ async function renderMoveNav() {
             });
         }
 
-        // "Up" navigation
         if (fileState.moveMenu.dest) {
             const upDiv = document.createElement('div');
             upDiv.className = 'file-item';
-            upDiv.innerHTML = `<div class="file-info"><div class="file-name">⬆️ Up</div></div>`;
+            upDiv.innerHTML = `<div class="file-info"><div class="file-name">\u2B06\uFE0F Up</div></div>`;
             upDiv.onclick = () => {
-                const parts = fileState.moveMenu.dest.split('/').filter(p => p);
+                const parts = fileState.moveMenu.dest.split('/').filter(Boolean);
                 parts.pop();
                 fileState.moveMenu.dest = parts.join('/');
                 renderMoveNav();
@@ -438,61 +683,8 @@ async function renderMoveNav() {
     }
 }
 
-// ========== RECENTLY READ TRACKING ==========
-async function trackFileAsRecentlyRead(filePath) {
-    try {
-        const prefs = await fetch(`${API_BASE}/audiobooks/preferences/get`).then(r => r.json());
-        if (!prefs.audiobooks) prefs.audiobooks = {};
-        prefs.audiobooks[filePath] = { last_played: Date.now() };
+// ========== TEXT FILE CREATION ==========
 
-        await fetch(`${API_BASE}/audiobooks/preferences/save`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(prefs)
-        });
-        console.log(`[TRACKING] Marked file as recently read: ${filePath}`);
-    } catch (error) {
-        console.error('[TRACKING] Failed to track file as recently read:', error);
-    }
-}
-
-// ========== UTILITIES ==========
-function formatBytes(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
-}
-
-function openStreamMode(filePath) {
-    window.location.href = `/stream?ebook=${encodeURIComponent(filePath)}`;
-}
-
-// ========== SETTINGS MENU ==========
-function toggleFileSettingsMenu(event, menuId) {
-    event.stopPropagation();
-    const menu = document.getElementById('settings-' + menuId);
-    if (!menu) return;
-
-    document.querySelectorAll('.settings-menu').forEach(m => {
-        if (m.id !== 'settings-' + menuId) m.style.display = 'none';
-    });
-
-    menu.style.display = menu.style.display === 'none' || !menu.style.display ? 'block' : 'none';
-}
-
-function closeAllFileSettingsMenus() {
-    document.querySelectorAll('.settings-menu').forEach(menu => menu.style.display = 'none');
-}
-
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.settings-menu') && !e.target.classList.contains('settings-btn')) {
-        closeAllFileSettingsMenus();
-    }
-});
-
-// ========== CREATE TEXT FILE ==========
 function showCreateTextFileModal() {
     const modal = document.getElementById('createTextFileModal');
     modal.style.display = 'flex';
@@ -519,7 +711,6 @@ async function handleCreateTextFile(e) {
         return;
     }
 
-    // Auto-append .txt if no extension
     if (!filename.includes('.')) {
         filename += '.txt';
     }
@@ -533,20 +724,342 @@ async function handleCreateTextFile(e) {
             body: JSON.stringify({ path, content })
         });
         closeCreateTextFileModal();
-        await refreshFiles();
+        refreshFiles();
     } catch (error) {
         console.error('Create text file error:', error);
         alert(`Error creating file: ${error.message}`);
     }
 }
 
+// ========== UTILITIES ==========
+
+function formatBytes(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+}
+
+function openStreamMode(filePath) {
+    window.location.href = `/stream?ebook=${encodeURIComponent(filePath)}`;
+}
+
+function showToast(msg) {
+    let toast = document.getElementById('fileManagerToast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'fileManagerToast';
+        toast.style.cssText = 'position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: #fff; padding: 10px 20px; border-radius: 20px; z-index: 10000; font-size: 14px; opacity: 0; transition: opacity 0.3s;';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = msg;
+    toast.style.opacity = '1';
+    setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+}
+
+function createButton(className, text, onClick) {
+    const btn = document.createElement('button');
+    btn.className = className;
+    btn.textContent = text;
+    btn.addEventListener('click', onClick);
+    return btn;
+}
+
+// ========== DUPLICATE DETECTION & POPUP MENU ==========
+
+/**
+ * Show the duplicate files popup menu.
+ * Returns a promise that resolves to:
+ *   - null if user cancels
+ *   - { action: 'replace', paths: [...] }
+ *   - { action: 'copy', paths: [...] }
+ *   - { action: 'ignore', paths: [...] }
+ *   - { action: 'upload_anyway', ignored: [...] }
+ */
+function showDuplicatePopupMenu(file, dupCheck) {
+    return new Promise((resolve) => {
+        const duplicates = dupCheck.duplicates || []
+        if (duplicates.length === 0) {
+            resolve(null); // No duplicates, caller should do normal upload
+            return;
+        }
+
+        // Remove existing popup if any
+        const existing = document.getElementById('duplicateUploadMenu');
+        if (existing) existing.remove();
+
+        const menu = document.createElement('div');
+        menu.id = 'duplicateUploadMenu';
+        menu.style.cssText = 'display: flex; z-index: 10004;';
+
+        // Build rows for each duplicate
+        let rowsHtml = '';
+        duplicates.forEach((dup, idx) => {
+            const totalCache = (dup.parse_cache_size_mb + dup.stream_cache_size_mb).toFixed(1);
+            const isGenerating = dup.generation_status === 'in_progress';
+            const genWarning = isGenerating
+                ? `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(255, 152, 0, 0.15); border-radius: 4px; font-size: 12px; color: #ffb74d;">⚠️ Audiobook generation in progress (${dup.generation_info?.model || 'unknown'}/${dup.generation_info?.voice || 'unknown'}). Replacing may interrupt it.</div>`
+                : '';
+
+            rowsHtml += `
+                <div style="margin-bottom: 12px; padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
+                    <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">📄 ${dup.filename}</div>
+                    <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
+                        ${formatBytes(dup.size)} · Path: ${dup.path}
+                        ${dup.stream_cache_count > 0 ? ` · 🎵 ${dup.stream_cache_count} audiobook cache${dup.stream_cache_count > 1 ? 'es' : ''} · ${dup.stream_cache_size_mb.toFixed(1)} MB` : ''}
+                        ${dup.parse_cache_size_mb > 0 ? ` · 📖 Parse cache: ${dup.parse_cache_size_mb.toFixed(1)} MB` : ''}
+                    </div>
+                    ${genWarning}
+                    <div style="display: flex; gap: 8px; margin-top: 10px;">
+                        <button class="btn btn-sm btn-replace" data-idx="${idx}" data-action="replace" style="flex: 1;">🔄 Replace</button>
+                        <button class="btn btn-sm btn-copy" data-idx="${idx}" data-action="copy" style="flex: 1;">📋 Copy</button>
+                        <button class="btn btn-sm btn-ignore" data-idx="${idx}" data-action="ignore" style="flex: 1;">⏭️ Ignore</button>
+                    </div>
+                </div>
+            `;
+        });
+
+        menu.innerHTML = `
+            <div style="max-width: 520px; width: 95%; margin: auto; padding: 24px; background: var(--bg-primary); border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
+                <h3 style="margin: 0 0 16px 0; font-size: 18px;">📚 Uploading: ${file.name}</h3>
+                <p style="margin: 0 0 16px; color: var(--text-secondary); font-size: 14px;">Found existing file(s) with the same name:</p>
+                <div id="duplicateRows">${rowsHtml}</div>
+                <div style="display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1); justify-content: flex-end;">
+                    <button id="dupCancelAll" class="btn btn-danger">Cancel</button>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(menu);
+        menu.style.display = 'flex';
+
+        // Wire up per-file buttons — click to immediately close and proceed
+        menu.querySelectorAll('[data-action]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.idx);
+                const action = btn.dataset.action;
+                const dup = duplicates[idx];
+
+                // Close popup immediately
+                menu.style.display = 'none';
+                menu.classList.remove('active');
+                setTimeout(() => menu.remove(), 300);
+
+                // Resolve with the action for this specific duplicate
+                resolve({ action, paths: [dup.path] });
+            });
+        });
+
+        // Cancel button
+        menu.querySelector('#dupCancelAll').addEventListener('click', () => {
+            menu.style.display = 'none';
+            menu.classList.remove('active');
+            setTimeout(() => menu.remove(), 300);
+            resolve(null);
+        });
+
+        // Close on backdrop click
+        menu.addEventListener('click', (e) => {
+            if (e.target === menu) {
+                menu.style.display = 'none';
+                menu.classList.remove('active');
+                setTimeout(() => menu.remove(), 300);
+                resolve(null);
+            }
+        });
+    });
+}
+
+// ========== FILE UPLOAD ==========
+
+async function handleFileUpload(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const uploadPromises = Array.from(files).map(async (file) => {
+        // Step 1: Check for duplicates BEFORE uploading
+        let dupCheck = null;
+        try {
+            const checkParams = new URLSearchParams();
+            checkParams.set('filename', file.name);
+            checkParams.set('path', fileState.current);
+            const checkUrl = `${API_BASE}/files/upload-check?${checkParams.toString()}`;
+            const checkRes = await fetch(checkUrl);
+            if (checkRes.ok) {
+                dupCheck = await checkRes.json();
+            }
+        } catch (e) {
+            console.error('[UPLOAD] Duplicate check failed:', e);
+        }
+
+        // Step 2: Handle duplicates if any
+        if (dupCheck && dupCheck.has_duplicates && dupCheck.duplicates.length > 0) {
+            const actions = await showDuplicatePopupMenu(file, dupCheck);
+
+            if (actions === null) {
+                // User cancelled
+                return null;
+            }
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('path', fileState.current);
+
+            try {
+                if (actions.action === 'replace') {
+                    // Upload with replace cache
+                    const params = new URLSearchParams();
+                    params.set('path', fileState.current);
+                    actions.paths.forEach(p => params.append('replace_paths', p));
+                    const url = `${API_BASE}/files/upload-with-replace-cache?${params.toString()}`;
+                    const res = await fetch(url, { method: 'POST', body: formData });
+                    if (!res.ok) throw new Error(await res.text());
+                    return file.name;
+                } else if (actions.action === 'copy') {
+                    // Upload with copy cache
+                    const params = new URLSearchParams();
+                    params.set('path', fileState.current);
+                    actions.paths.forEach(p => params.append('copy_paths', p));
+                    const url = `${API_BASE}/files/upload-with-copy-cache?${params.toString()}`;
+                    const res = await fetch(url, { method: 'POST', body: formData });
+                    if (!res.ok) throw new Error(await res.text());
+                    return file.name;
+                } else {
+                    // Upload with ignore cache
+                    const params = new URLSearchParams();
+                    params.set('path', fileState.current);
+                    actions.paths.forEach(p => params.append('ignored_paths', p));
+                    const url = `${API_BASE}/files/upload-ignore-cache?${params.toString()}`;
+                    const res = await fetch(url, { method: 'POST', body: formData });
+                    if (!res.ok) throw new Error(await res.text());
+                    return file.name;
+                }
+            } catch (error) {
+                console.error(`Failed to upload ${file.name}:`, error);
+                return null;
+            }
+        }
+
+        // No duplicates — normal upload
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('path', fileState.current);
+
+        try {
+            const url = `${API_BASE}/files/upload?path=${encodeURIComponent(fileState.current)}`;
+            const res = await fetch(url, {
+                method: 'POST',
+                body: formData
+            });
+            if (!res.ok) throw new Error(await res.text());
+            return file.name;
+        } catch (error) {
+            console.error(`Failed to upload ${file.name}:`, error);
+            return null;
+        }
+    });
+
+    const results = await Promise.all(uploadPromises);
+    const uploaded = results.filter(Boolean);
+    const failed = results.length - uploaded.length;
+
+    // Track uploaded ebooks as recently read so they sort to top under "recent"
+    for (const fileName of uploaded) {
+        const isEbook = /\.(epub|txt|pdf)$/i.test(fileName);
+        if (isEbook) {
+            const fullPath = fileState.current ? `${fileState.current}/${fileName}` : fileName;
+            await trackAsRecentlyRead(fullPath).catch(() => {});
+        }
+    }
+
+    if (uploaded.length > 0) {
+        showToast(`Uploaded ${uploaded.length} file(s)${failed > 0 ? `, ${failed} failed` : ''}`);
+        refreshFiles();
+    } else if (failed > 0) {
+        alert(`Failed to upload ${failed} file(s). Check console for details.`);
+    }
+
+    // Reset input so the same file can be uploaded again
+    event.target.value = '';
+}
+
+// ========== PREPARE & DOWNLOAD OPUS (file-manager settings panel) ==========
+
+async function prepareAudiobookDownload(ebookPath, model, voice) {
+    showToast('Preparing download...');
+
+    try {
+        const res = await fetch(`${API_BASE}/stream/prepare-download?ebook_path=${encodeURIComponent(ebookPath)}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}`, {
+            method: 'POST'
+        });
+        if (!res.ok) throw new Error('Failed to prepare download');
+
+        const data = await res.json();
+        if (data.status === 'ready') {
+            showToast('Download ready!');
+            downloadAudiobook(ebookPath, model, voice);
+        } else {
+            pollDownloadStatus(ebookPath, model, voice);
+        }
+    } catch (error) {
+        showToast('Error: ' + error.message);
+    }
+}
+
+async function pollDownloadStatus(ebookPath, model, voice) {
+    const poll = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/stream/download-status?ebook_path=${encodeURIComponent(ebookPath)}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}`);
+            if (!res.ok) throw new Error('Failed to get status');
+
+            const data = await res.json();
+            if (data.status === 'ready') {
+                showToast('Download ready!');
+                downloadAudiobook(ebookPath, model, voice);
+            } else {
+                setTimeout(poll, 2000);
+            }
+        } catch (error) {
+            console.error('[DOWNLOAD] Poll error:', error);
+            setTimeout(poll, 5000);
+        }
+    };
+    poll();
+}
+
+function downloadAudiobook(ebookPath, model, voice) {
+    const ebookName = ebookPath.split('/').pop().replace(/\.[^.]+$/, '');
+    const safeName = ebookName.replace(/[^a-zA-Z0-9\s-]/g, '_');
+    const url = `${API_BASE}/stream/download?ebook_path=${encodeURIComponent(ebookPath)}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${safeName}.opus`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    showToast('Download started');
+}
+
 // ========== GLOBAL EXPORTS ==========
+
 window.createDirectory = createDirectory;
-window.toggleFileSettingsMenu = toggleFileSettingsMenu;
-window.closeAllFileSettingsMenus = closeAllFileSettingsMenus;
+window.openFileSettingsPanel = openFileSettingsPanel;
+window.closeFileSettingsPanel = closeFileSettingsPanel;
 window.openStreamMode = openStreamMode;
 window.showCreateTextFileModal = showCreateTextFileModal;
 window.closeCreateTextFileModal = closeCreateTextFileModal;
+window.showGenerateCacheModal = showGenerateCacheModal;
+window.closeGenerateCacheModal = closeGenerateCacheModal;
+window.loadGenCacheModels = loadGenCacheModels;
+window.updateGenCacheVoices = updateGenCacheVoices;
+window.handleCacheGenerate = handleCacheGenerate;
+window.handleCacheRegenerate = handleCacheRegenerate;
+window.handleCacheDelete = handleCacheDelete;
+window.handleCachePause = handleCachePause;
+window.handleCacheResume = handleCacheResume;
+window.prepareAudiobookDownload = prepareAudiobookDownload;
 
 // Bind form submit
 document.addEventListener('DOMContentLoaded', () => {

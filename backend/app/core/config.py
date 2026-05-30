@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = 500  # Characters per audio chunk (smaller = better TTS quality)
     AUDIO_FORMAT: str = "opus"  # Audio format: "opus" or "mp3" (one-line rollback)
     
+    # Upload duplicate behavior (optional - can be overridden per-user via preferences)
+    UPLOAD_DUPLICATE_BEHAVIOR: str = "popup"  # "popup" | "replace" | "copy" | "ignore"
+    
     model_config = ConfigDict(
         env_file=".env",
         case_sensitive=True,

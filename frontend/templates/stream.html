@@ -432,7 +432,9 @@
     <div class="stream-container player" style="padding-top: 8px; padding-bottom: 8px;">
         <!-- Header Section -->
         <div class="player-header" id="playerHeader">
-            <h3 id="bookTitle" style="margin: 0; font-size: 16px;">Loading...</h3>
+            <h3 id="bookTitle" style="margin: 0; font-size: 16px;">Loading...
+                <span id="audiobookCompleteIndicator" style="display:none;font-size:12px;margin-left:6px;">🟢</span>
+            </h3>
         </div>
         
         <!-- Buttons Section -->
@@ -469,7 +471,8 @@
                    max="100" 
                    value="0"
                    style="width: 100%; cursor: pointer;"
-                   oninput="seekToPosition(this.value)"
+                   oninput="onProgressBarDrag(this.value)"
+                   onchange="onProgressBarRelease(this.value)"
                    onmousedown="this.dataset.seeking='true'"
                    onmouseup="this.dataset.seeking='false'"
                    ontouchstart="this.dataset.seeking='true'"
@@ -645,6 +648,16 @@
                         <button type="button" onclick="clearAudioCache()" class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;">🗑️ Clear Cache</button>
                     </div>
                 </div>
+
+                <!-- Audiobook Panel -->
+                <div id="audiobookPanel" style="background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="font-weight: bold; font-size: 13px;">🎵 Audiobook</span>
+                    </div>
+                    <div id="audiobookContent" style="font-size: 12px; color: var(--text-secondary, #888);">
+                        Loading...
+                    </div>
+                </div>
                 
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">Save Settings</button>
@@ -658,7 +671,11 @@
         // Pass ebook path from server
         const EBOOK_PATH = "{{ ebook_path }}";
     </script>
-    <script src="/static/js/theme-manager.js?v=2"></script>
+    <script src="/static/js/theme-manager.js"></script>
+    <script src="/static/js/stream-state.js"></script>
+    <script src="/static/js/stream-audio.js"></script>
+    <script src="/static/js/stream-text.js"></script>
+    <script src="/static/js/stream-cache.js?v=2"></script>
     <script src="/static/js/stream.js"></script>
 </body>
 </html>

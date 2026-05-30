@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
+
 import ebooklib
 from ebooklib import epub
 from bs4 import BeautifulSoup
@@ -39,7 +39,7 @@ class EbookParser:
         self._image_cache = {}  # Cache for extracted images {ebook_path: {image_id: base64_data}}
         self._parse_cache = {}  # In-memory cache {cache_key: {mtime, data}}
     
-    def parse_ebook(self, file_path: Path) -> List[Dict[str, str]]:
+    def parse_ebook(self, file_path: Path) -> list[dict[str, str]]:
         """
         Parse an ebook and return structured text chunks
         
@@ -59,7 +59,7 @@ class EbookParser:
         else:
             raise ValueError(f"Unsupported format: {suffix}")
     
-    def parse_ebook_with_images(self, file_path: Path) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+    def parse_ebook_with_images(self, file_path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
         """
         Parse an ebook and return structured text chunks with image references
         
@@ -81,7 +81,7 @@ class EbookParser:
                 chunk['images'] = []
             return chunks, {}
     
-    def _parse_epub(self, file_path: Path) -> List[Dict[str, str]]:
+    def _parse_epub(self, file_path: Path) -> list[dict[str, str]]:
         """Parse EPUB file"""
         try:
             book = epub.read_epub(str(file_path))
@@ -114,7 +114,7 @@ class EbookParser:
         except Exception as e:
             raise ValueError(f"Error parsing EPUB: {str(e)}")
     
-    def _parse_epub_with_images(self, file_path: Path) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+    def _parse_epub_with_images(self, file_path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
         """Parse EPUB file and extract images"""
         try:
             book = epub.read_epub(str(file_path))
@@ -231,7 +231,7 @@ class EbookParser:
         except Exception as e:
             raise ValueError(f"Error parsing EPUB with images: {str(e)}")
     
-    def _parse_txt(self, file_path: Path) -> List[Dict[str, str]]:
+    def _parse_txt(self, file_path: Path) -> list[dict[str, str]]:
         """Parse plain text file"""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -257,7 +257,7 @@ class EbookParser:
         except Exception as e:
             raise ValueError(f"Error parsing TXT: {str(e)}")
     
-    def _parse_html(self, file_path: Path) -> List[Dict[str, str]]:
+    def _parse_html(self, file_path: Path) -> list[dict[str, str]]:
         """Parse HTML file"""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -270,7 +270,7 @@ class EbookParser:
         except Exception as e:
             raise ValueError(f"Error parsing HTML: {str(e)}")
     
-    def _parse_pdf(self, file_path: Path) -> List[Dict[str, str]]:
+    def _parse_pdf(self, file_path: Path) -> list[dict[str, str]]:
         """Parse PDF file"""
         try:
             reader = PdfReader(str(file_path))
@@ -332,7 +332,7 @@ class EbookParser:
         except Exception as e:
             raise ValueError(f"Error parsing PDF: {str(e)}")
     
-    def _parse_pdf_with_images(self, file_path: Path) -> Tuple[List[Dict[str, str]], Dict[str, str]]:
+    def _parse_pdf_with_images(self, file_path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
         """Parse PDF file and extract images"""
         try:
             reader = PdfReader(str(file_path))
@@ -427,7 +427,7 @@ class EbookParser:
         # Must have at least 2 actual characters to be speakable
         return len(letters_only) >= 2
     
-    def _split_oversized_chunk(self, text: str, max_chars: int = 500) -> List[str]:
+    def _split_oversized_chunk(self, text: str, max_chars: int = 500) -> list[str]:
         """
         Split an oversized chunk at the nearest space after max_chars.
         This preserves existing chunk boundaries while preventing huge chunks.
@@ -469,7 +469,7 @@ class EbookParser:
         
         return result
     
-    def chunk_text(self, text: str, chunk_size: int = 4096, max_chunk_chars: int = 500) -> List[str]:
+    def chunk_text(self, text: str, chunk_size: int = 4096, max_chunk_chars: int = 500) -> list[str]:
         """
         Split text into chunks of approximately chunk_size characters,
         breaking at sentence boundaries. Also enforces a maximum character
@@ -514,7 +514,7 @@ class EbookParser:
     #  Disk-backed caching for parsed ebooks (B-3, B-5, B-11)           #
     # ------------------------------------------------------------------ #
 
-    def parse_and_cache(self, file_path: Path, with_images: bool = False) -> Dict:
+    def parse_and_cache(self, file_path: Path, with_images: bool = False) -> dict:
         """
         Parse an ebook and cache the result on disk.
         Returns the parsed data structure.
@@ -593,7 +593,7 @@ class EbookParser:
 
         return data
 
-    def _parse_for_streaming(self, file_path: Path) -> Dict:
+    def _parse_for_streaming(self, file_path: Path) -> dict:
         """Parse ebook and build streaming data structure (cached version)."""
         chapters_data = self.parse_ebook(file_path)
 
@@ -647,7 +647,7 @@ class EbookParser:
             "chunk_time_index": chunk_time_index
         }
 
-    def _parse_for_streaming_with_images(self, file_path: Path) -> Dict:
+    def _parse_for_streaming_with_images(self, file_path: Path) -> dict:
         """Parse ebook with images and build streaming data structure (cached version)."""
         chapters_data, all_images = self.parse_ebook_with_images(file_path)
 
