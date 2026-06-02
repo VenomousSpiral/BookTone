@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from fastapi.responses import FileResponse
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pathlib import Path
 from pydantic import BaseModel
 import threading
@@ -128,7 +128,18 @@ async def upload_file_replace_cache(
     delete old files, save new file.
     """
     try:
-        # Save file atomically
+        # Compute hashes of duplicates BEFORE saving (they may be overwritten)
+        dup_hashes: Dict[str, str] = {}
+        for dup_path in replace_paths:
+            if not dup_path:
+                continue
+            old_file = settings.EBOOKS_DIR / dup_path
+            if old_file.exists():
+                dup_hashes[dup_path] = file_manager._compute_file_hash(old_file)
+            else:
+                logger.warning(f"[MERGE] Duplicate file not found: {dup_path}")
+        
+        # Save file atomically (may overwrite duplicates with same path)
         file_path = file_manager.save_uploaded_file_atomic(file, path)
         
         # Compute new file hash
@@ -138,18 +149,11 @@ async def upload_file_replace_cache(
         all_caches_replaced = {"parse_cache": False, "stream_cache": 0}
         
         for dup_path in replace_paths:
-            if not dup_path:
+            if not dup_path or dup_path not in dup_hashes:
                 continue
+            old_hash = dup_hashes[dup_path]
             
-            # Compute old file hash
-            old_file = settings.EBOOKS_DIR / dup_path
-            if not old_file.exists():
-                logger.warning(f"[MERGE] Duplicate file not found: {dup_path}")
-                continue
-            
-            old_hash = file_manager._compute_file_hash(old_file)
-            
-            # Replace caches
+            # Replace caches (skip rename when same path — file already overwritten)
             cache_result = file_manager.replace_cache_to_new_hash(
                 old_ebook_path=dup_path,
                 new_ebook_path=str(file_path),
@@ -214,7 +218,18 @@ async def upload_file_copy_cache(
     delete old files, save new file.
     """
     try:
-        # Save file atomically
+        # Compute hashes of duplicates BEFORE saving (they may be overwritten)
+        dup_hashes: Dict[str, str] = {}
+        for dup_path in copy_paths:
+            if not dup_path:
+                continue
+            old_file = settings.EBOOKS_DIR / dup_path
+            if old_file.exists():
+                dup_hashes[dup_path] = file_manager._compute_file_hash(old_file)
+            else:
+                logger.warning(f"[MERGE] Duplicate file not found: {dup_path}")
+        
+        # Save file atomically (may overwrite duplicates with same path)
         file_path = file_manager.save_uploaded_file_atomic(file, path)
         
         # Compute new file hash
@@ -224,16 +239,9 @@ async def upload_file_copy_cache(
         all_caches_copied = {"parse_cache": False, "stream_cache": 0, "bytes_copied": 0}
         
         for dup_path in copy_paths:
-            if not dup_path:
+            if not dup_path or dup_path not in dup_hashes:
                 continue
-            
-            # Compute old file hash
-            old_file = settings.EBOOKS_DIR / dup_path
-            if not old_file.exists():
-                logger.warning(f"[MERGE] Duplicate file not found: {dup_path}")
-                continue
-            
-            old_hash = file_manager._compute_file_hash(old_file)
+            old_hash = dup_hashes[dup_path]
             
             # Copy caches
             cache_result = file_manager.copy_cache_to_new_hash(

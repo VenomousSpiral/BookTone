@@ -182,6 +182,10 @@ async function loadSettings() {
             state.timeMode = state.settings.time_mode;
         }
         state.showImages = state.settings.show_images === true;
+        if (state.settings.save_stream_audio !== undefined) {
+            const toggle = document.getElementById('saveStreamAudioToggle');
+            if (toggle) toggle.checked = !!state.settings.save_stream_audio;
+        }
 
         applyVisibilitySettings();
     } catch (error) {
@@ -261,6 +265,7 @@ async function saveSettingsToServer() {
                 show_title: state.settings.show_title,
                 show_progress_bar: state.settings.show_progress_bar,
                 show_images: state.showImages,
+                save_stream_audio: state.settings.save_stream_audio,
                 sleep_timer_minutes: state.settings.sleep_timer_minutes,
                 show_sleep_timer: state.sleepTimer.showTimer
             })
@@ -649,6 +654,8 @@ function showSettings() {
     if (showProgressBarToggle) showProgressBarToggle.checked = state.settings.show_progress_bar !== false;
     if (showImagesToggle) showImagesToggle.checked = state.showImages;
     if (showSleepTimerToggle) showSleepTimerToggle.checked = state.sleepTimer.showTimer;
+    const saveStreamAudioToggle = document.getElementById('saveStreamAudioToggle');
+    if (saveStreamAudioToggle) saveStreamAudioToggle.checked = !!state.settings.save_stream_audio;
 
     showModal('settings');
 }
@@ -674,6 +681,8 @@ function saveSettings(e) {
     state.settings.show_title = showTitleToggle?.checked !== false;
     state.settings.show_progress_bar = showProgressBarToggle?.checked !== false;
     state.settings.show_images = showImagesToggle?.checked;
+    const saveStreamAudioToggle2 = document.getElementById('saveStreamAudioToggle');
+    state.settings.save_stream_audio = !!saveStreamAudioToggle2?.checked;
 
     state.progressMode = progressModeSelect?.value || 'book';
     state.timeMode = timeModeSelect?.value || 'total';
@@ -712,6 +721,17 @@ function toggleTitle() {
     const toggle = document.getElementById('showTitleToggle');
     state.settings.show_title = toggle?.checked !== false;
     applyVisibilitySettings();
+    saveSettingsToServer();
+}
+
+function toggleSaveStreamAudio() {
+    const toggle = document.getElementById('saveStreamAudioToggle');
+    state.settings.save_stream_audio = !!toggle?.checked;
+    if (state.settings.save_stream_audio) {
+        showToast('Cache audio saving enabled — future chunks will be saved to disk', 3000);
+    } else {
+        showToast('Cache audio saving disabled', 2500);
+    }
     saveSettingsToServer();
 }
 

@@ -296,15 +296,36 @@ class StreamService:
                 if stream_settings.get("save_stream_audio", False):
                     try:
                         cache_dir = self.get_cache_dir(ebook_path, model, voice)
+                        logger.info(
+                            "[STREAM CACHE] Saving audio for chars %d-%d -> dir=%s (exists=%s)",
+                            start_char, end_char, cache_dir, cache_dir.exists(),
+                        )
                         cache_dir.mkdir(parents=True, exist_ok=True)
+                        if not cache_dir.exists():
+                            logger.error(
+                                "[STREAM CACHE ERROR] mkdir failed to create dir: %s",
+                                cache_dir,
+                            )
+                            raise RuntimeError(f"Failed to create cache directory: {cache_dir}")
                         audio_file = cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
+                        logger.info(
+                            "[STREAM CACHE] Writing %d bytes -> %s",
+                            len(audio_data), audio_file,
+                        )
                         audio_file.write_bytes(audio_data)
-                        logger.debug(
-                            "[STREAM CACHE] Saved audio for chars %d-%d: %s",
-                            start_char, end_char, audio_file,
+                        if not audio_file.exists():
+                            raise RuntimeError(f"Audio file was not created: {audio_file}")
+                        logger.info(
+                            "[STREAM CACHE] Successfully saved %d bytes to %s",
+                            len(audio_data), audio_file,
                         )
                     except Exception as e:
                         logger.error("[STREAM CACHE ERROR] Failed to save audio: %s", e)
+                else:
+                    logger.info(
+                        "[STREAM CACHE] SKIPPED (save_stream_audio=False or missing params): ebook=%s start=%d end=%d",
+                        ebook_path, start_char, end_char,
+                    )
 
             return audio_data
 

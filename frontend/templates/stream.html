@@ -631,7 +631,7 @@
                 
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
                     <label for="saveStreamAudioToggle" style="margin: 0;">💾 Save Stream Audio</label>
-                    <input type="checkbox" id="saveStreamAudioToggle" style="width: 20px; height: 20px; cursor: pointer;">
+                    <input type="checkbox" id="saveStreamAudioToggle" onchange="toggleSaveStreamAudio()" style="width: 20px; height: 20px; cursor: pointer;">
                 </div>
                 <p style="font-size: 11px; color: var(--text-secondary, #888); margin: 0 0 12px 0; line-height: 1.4;">Cache generated audio chunks to disk. When you later generate a full audiobook with the same model/voice, cached chunks will be reused instead of re-generated.</p>
                 
