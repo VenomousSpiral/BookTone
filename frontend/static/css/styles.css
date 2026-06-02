@@ -357,6 +357,11 @@ nav {
     text-size-adjust: 100%;
 }
 
+.chunk-container {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
 .lrc-line {
     padding: 8px;
     margin: 5px 0;

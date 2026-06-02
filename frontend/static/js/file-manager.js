@@ -173,7 +173,7 @@ function openFileSettingsPanel(file) {
         <div class="modal-content" style="max-width: 800px; width: 95%; max-height: 90vh; overflow-y: auto; margin: auto;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--border-color);">
                 <div>
-                    <h2 style="margin: 0 0 5px 0; font-size: 24px;">${isEbook ? '\uD83C\uDFB5' : '\uD83D\uDCC1'} ${bookTitle}</h2>
+                    <h2 style="margin: 0 0 5px 0; font-size: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${isEbook ? '\uD83C\uDFB5' : '\uD83D\uDCC1'} ${bookTitle}</h2>
                     <p style="margin: 0; color: var(--text-secondary); font-size: 14px;">${file.is_directory ? 'Folder' : 'File'} \u00B7 ${file.is_directory ? '' : formatBytes(file.size)}</p>
                 </div>
                 <button onclick="closeFileSettingsPanel()" style="background: none; border: none; font-size: 28px; cursor: pointer; color: var(--text-secondary); padding: 5px 10px;">\u2715</button>
@@ -600,7 +600,7 @@ function showMoveMenu(filePath, isDirectory) {
     menu.classList.add('active');
     menu.innerHTML = `
         <div class="modal-content" style="max-width:600px;">
-            <h3>Move ${isDirectory ? 'Directory' : 'File'}: <span id="moveSourceName"></span></h3>
+            <h3 style="overflow-wrap: break-word;">Move ${isDirectory ? 'Directory' : 'File'}: <span id="moveSourceName" style="word-break: break-all;"></span></h3>
             <div id="moveNavBreadcrumb" class="breadcrumb"></div>
             <div id="moveNavList" style="max-height:300px;overflow-y:auto;margin-bottom:15px;"></div>
             <div class="modal-buttons">
