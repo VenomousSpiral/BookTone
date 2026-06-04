@@ -10,8 +10,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     await Promise.all([loadSettings(), loadModels(), loadProgress()]);
     await parseBook();
 
-    if (state.progress?.current_chunk > 0) {
-        log('Restoring position to chunk:', state.progress.currentChunk);
+    if (state.progress?.current_chunk != null && state.progress.current_chunk !== undefined) {
+        log('Restoring position to chunk:', state.progress.current_chunk);
         state.currentChunk = state.progress.current_chunk;
         highlightCurrentChunk();
         updateProgress();
@@ -793,7 +793,10 @@ function goBack() {
     shutdownAndNavigate('/?path=' + encodeURIComponent(parentDir));
 }
 
-function shutdownAndNavigate(targetHref) {
+async function shutdownAndNavigate(targetHref) {
+    // Save current position before navigating away
+    try { await saveProgress(); } catch(e) {}
+    
     hideLoading();
     hideAudioStatus();
     cleanupSleepTimer();

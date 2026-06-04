@@ -1,6 +1,8 @@
 """
 FastAPI application entry point.
 """
+import atexit
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -20,11 +22,39 @@ from app.api.routes import (
     preferences,
 )
 from app.utils.path_utils import sanitize_ebook_path
+from app.services.database import init_db, get_connection
+from app.services.migrate_from_json import migrate_if_needed
+
+# --------------------------------------------------------------------------- #
+#  Lifespan: DB init + migration on startup                                   #
+# --------------------------------------------------------------------------- #
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize schema (idempotent).
+    init_db()
+
+    # Run one-time migration if needed.
+    migrate_if_needed()
+
+    yield
+
+    # Cleanup on shutdown — close DB connections for all service singletons.
+    try:
+        from app.services import stream_service as ss_mod
+        svc = getattr(getattr(ss_mod, 'stream_service', None), 'settings_service', None)
+        if svc is not None and hasattr(svc, 'close'):
+            svc.close()
+    except Exception:
+        pass  # best-effort cleanup
+
 
 app = FastAPI(
     title="Audio Book Reader",
     description="Self-hosted audiobook server with streaming and cache-first generation",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Middleware

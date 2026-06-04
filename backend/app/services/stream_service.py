@@ -3,12 +3,14 @@ Core streaming service for on-demand TTS generation.
 
 Handles text extraction, image retrieval, and TTS audio generation.
 Cache management and settings are delegated to separate services.
+Progress/bookmarks use SQLite (bookmarks table with context='progress').
 """
 from pathlib import Path
 from typing import Optional, Dict
 import json
 import hashlib
 import logging
+from datetime import datetime
 
 from openai import OpenAI
 import httpx
@@ -31,11 +33,7 @@ class StreamService:
             audio_format=settings.AUDIO_FORMAT,
             compute_hash_fn=self._compute_ebook_hash,
         )
-        self.settings_service = SettingsService(
-            settings_file=settings.STORAGE_DIR / "stream_settings.json"
-        )
-        self._progress_db: Dict[str, StreamProgress] = {}
-        self._load_progress_db()
+        self.settings_service = SettingsService()
 
     # ------------------------------------------------------------------ #
     #  Settings delegation                                               #
@@ -77,77 +75,206 @@ class StreamService:
             cache_model_dir, start_char, end_char
         )
 
-    # ------------------------------------------------------------------ #
-    #  Progress & bookmarks (in-memory + disk persistence)               #
-    # ------------------------------------------------------------------ #
-
-    def _load_progress_db(self):
-        progress_file = settings.STORAGE_DIR / "stream_progress.json"
-        if progress_file.exists():
-            try:
-                with open(progress_file, "r") as f:
-                    data = json.load(f)
-                    for ebook_path, progress_data in data.items():
-                        self._progress_db[ebook_path] = StreamProgress(**progress_data)
-                logger.debug(
-                    "[DEBUG] Loaded %d streaming progress records",
-                    len(self._progress_db),
-                )
-            except Exception as e:
-                logger.error("[ERROR] Failed to load streaming progress: %s", e)
-
-    def _save_progress_db(self):
-        progress_file = settings.STORAGE_DIR / "stream_progress.json"
+    @staticmethod
+    def _get_db_conn():
+        """Get a dict-like SQLite connection (same row_factory as database.get_connection)."""
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(str(settings.STORAGE_DIR / "app.db"))
+        conn.row_factory = _sqlite3.Row  # Enable dict-style row access by index name
+        return conn
+    
+    _progress_schema_created = False
+    
+    def _ensure_progress_schema(self):
+        """Ensure the progress/bookmarks tables exist in app.db."""
+        if StreamService._progress_schema_created:
+            return
+        db_path = settings.STORAGE_DIR / "app.db"
+        conn = self._get_db_conn()
         try:
-            data = {
-                ep: p.model_dump() for ep, p in self._progress_db.items()
-            }
-            with open(progress_file, "w") as f:
-                json.dump(data, f, indent=2, default=str)
-        except Exception as e:
-            logger.error("[ERROR] Failed to save streaming progress: %s", e)
-            raise
+            # Create bookmarks table if missing (for tests that don't call init_db).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS bookmarks (
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ebook_path    TEXT NOT NULL,
+                    context       TEXT NOT NULL DEFAULT 'progress',
+                    chunk_index   INTEGER NOT NULL,
+                    text_preview  TEXT DEFAULT ''
+                )
+            """)
+            conn.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_unique
+                    ON bookmarks(ebook_path, context, chunk_index)
+            """)
+            # Create profiles table if missing (for update_progress to work).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS profiles (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ebook_path      TEXT NOT NULL,
+                    model_name      TEXT NOT NULL,
+                    voice           TEXT NOT NULL,
+                    title           TEXT,
+                    status          TEXT NOT NULL DEFAULT 'not_started',
+                    last_position   INTEGER DEFAULT 0
+                )
+            """)
+            # Ensure last_position column exists (migration for older DBs).
+            try:
+                conn.execute("ALTER TABLE profiles ADD COLUMN last_position INTEGER DEFAULT 0")
+            except Exception:  # already exists or table has different shape
+                pass
+            conn.commit()
+        finally:
+            conn.close()
+        StreamService._progress_schema_created = True
 
     def get_progress(self, ebook_path: str) -> StreamProgress:
-        if ebook_path not in self._progress_db:
-            self._progress_db[ebook_path] = StreamProgress(ebook_path=ebook_path)
-        return self._progress_db[ebook_path]
+        """Return a StreamProgress populated from the SQLite tables.
+
+        Current chunk comes from profiles.last_position (primary source).
+        As a fallback it also reads max bookmarked index for backward compat.
+        Bookmarks are read separately so they never collide with progress data.
+        """
+        self._ensure_progress_schema()
+        conn = self._get_db_conn()
+        try:
+            # 1. Current chunk from profiles table (primary source).
+            current_chunk: int = 0
+            row = conn.execute(
+                "SELECT last_position FROM profiles WHERE ebook_path=?",
+                (ebook_path,),
+            ).fetchone()
+            if row and row["last_position"] is not None:
+                val = int(row["last_position"])
+                if val > current_chunk:
+                    current_chunk = val
+
+            # 2. Also check bookmarks for backward compat (legacy data still in DB).
+            bm_rows = conn.execute(
+                "SELECT chunk_index, text_preview FROM bookmarks WHERE ebook_path=? AND context='progress' ORDER BY chunk_index ASC",
+                (ebook_path,),
+            ).fetchall()
+
+            # 3. Collect user-created bookmark entries.
+            bm_dict: Dict[str, str] = {}
+            for row in bm_rows:
+                ci = int(row["chunk_index"])
+                if ci >= current_chunk:
+                    current_chunk = ci
+                bm_dict[str(ci)] = str(row["text_preview"]) or ""
+        except Exception:
+            pass  # keep defaults: current_chunk=0, bookmarks={}
+        finally:
+            conn.close()
+
+        return StreamProgress(ebook_path=ebook_path, current_chunk=current_chunk, bookmarks=bm_dict)
 
     def update_progress(self, ebook_path: str, chunk_index: int):
-        progress = self.get_progress(ebook_path)
-        progress.current_chunk = chunk_index
-        progress.last_updated = None  # pydantic will use default
-        self._save_progress_db()
+        """Store the current playback position in profiles.last_position."""
+        self._ensure_progress_schema()
+        conn = self._get_db_conn()
+        try:
+            # Upsert into profiles table — this is separate from user bookmarks.
+            existing = conn.execute(
+                "SELECT id FROM profiles WHERE ebook_path=?",
+                (ebook_path,),
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    "UPDATE profiles SET last_position=? WHERE ebook_path=?",
+                    (chunk_index, ebook_path),
+                )
+            else:
+                # Create a minimal profile row just to hold position.
+                now_str = datetime.now().isoformat()
+                try:
+                    conn.execute(
+                        "INSERT INTO profiles "
+                            "(ebook_path, model_name, voice, status, last_position, created_at, updated_at) "
+                            "VALUES (?, '', '', 'not_started', ?, ?, ?)",
+                        (ebook_path, chunk_index, now_str, now_str),
+                    )
+                except Exception:  # simplified schema without timestamp columns
+                    conn.execute(
+                        "INSERT INTO profiles "
+                            "(ebook_path, model_name, voice, status, last_position) "
+                            "VALUES (?, '', '', 'not_started', ?)",
+                        (ebook_path, chunk_index),
+                    )
+            conn.commit()
+        except Exception as e:
+            logger.error("[ERROR] Failed to update progress: %s", e)
+        finally:
+            conn.close()
 
     def toggle_bookmark(self, ebook_path: str, chunk_index: int, text_preview: str = "") -> bool:
-        progress = self.get_progress(ebook_path)
-        if progress.has_bookmark(chunk_index):
-            progress.remove_bookmark(chunk_index)
-            self._save_progress_db()
-            return False
-        else:
-            progress.add_bookmark(chunk_index, text_preview)
-            self._save_progress_db()
-            return True
+        self._ensure_progress_schema()
+        conn = self._get_db_conn()
+        try:
+            # Check if bookmark already exists.
+            existing = conn.execute(
+                "SELECT 1 FROM bookmarks WHERE ebook_path=? AND context='progress' AND chunk_index=?",
+                (ebook_path, chunk_index),
+            ).fetchone()
+
+            if existing:
+                conn.execute(
+                    "DELETE FROM bookmarks WHERE ebook_path=? AND context='progress' AND chunk_index=?",
+                    (ebook_path, chunk_index),
+                )
+                conn.commit()  # ← Added missing commit.
+                return False  # removed
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO bookmarks (ebook_path, context, chunk_index, text_preview) VALUES (?, 'progress', ?, ?)",
+                    (ebook_path, chunk_index, text_preview or ""),
+                )
+                conn.commit()  # ← Added missing commit.
+                return True  # added
+        except Exception as e:
+            logger.error("[ERROR] Failed to toggle bookmark: %s", e)
+            raise
+        finally:
+            conn.close()
 
     def clear_progress(self, ebook_path: str):
-        if ebook_path in self._progress_db:
-            del self._progress_db[ebook_path]
-            self._save_progress_db()
+        self._ensure_progress_schema()
+        conn = self._get_db_conn()
+        try:
+            # Clear position from profiles.
+            conn.execute(
+                "DELETE FROM profiles WHERE ebook_path=?",
+                (ebook_path,),
+            )
+            # Also clear any legacy progress bookmarks.
+            conn.execute(
+                "DELETE FROM bookmarks WHERE ebook_path=? AND context='progress'",
+                (ebook_path,),
+            )
+            conn.commit()
+        except Exception as e:
+            logger.error("[ERROR] Failed to clear progress: %s", e)
+        finally:
+            conn.close()
 
     def rename_progress(self, old_path: str, new_path: str):
         """Migrate progress/bookmarks from old path to new path."""
+        self._ensure_progress_schema()
         if old_path == new_path:
             return
-        if old_path in self._progress_db:
-            record = self._progress_db.pop(old_path)
-            record.ebook_path = new_path
-            self._progress_db[new_path] = record
-            self._save_progress_db()
-            logger.info(
-                "[PROGRESS] Migrated progress for %s -> %s",
-                old_path, new_path,
+        conn = self._get_db_conn()
+        try:
+            conn.execute(
+                "UPDATE bookmarks SET ebook_path=? WHERE ebook_path=?",
+                (new_path, old_path),
             )
+            conn.commit()
+            logger.info("[PROGRESS] Migrated progress for %s -> %s", old_path, new_path)
+        except Exception as e:
+            logger.error("[ERROR] Failed to rename progress: %s", e)
+        finally:
+            conn.close()
 
     # ------------------------------------------------------------------ #
     #  Path helpers                                                      #

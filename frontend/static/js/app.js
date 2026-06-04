@@ -279,6 +279,8 @@ function updateVoiceOptions() {
 async function handleGenerateSubmit(e) {
     e.preventDefault();
     const ebookPath = document.getElementById('generateFilePath').value;
+    // Track as recently read before navigating away
+    try { await trackAsRecentlyRead(ebookPath); } catch(err) {}
     window.location.href = `/stream?ebook_path=${encodeURIComponent(ebookPath)}`;
 }
 

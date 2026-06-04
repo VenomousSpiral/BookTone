@@ -741,7 +741,9 @@ function formatBytes(bytes) {
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
 }
 
-function openStreamMode(filePath) {
+async function openStreamMode(filePath) {
+    // Track as recently read before navigating away
+    try { await trackAsRecentlyRead(filePath); } catch(e) {}
     window.location.href = `/stream?ebook=${encodeURIComponent(filePath)}`;
 }
 

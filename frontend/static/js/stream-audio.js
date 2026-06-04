@@ -138,17 +138,19 @@ async function startPlaying() {
     await playNextSegment();
 }
 
-function pausePlaying() {
+async function pausePlaying() {
     state.isPlaying = false;
     state.isGeneratingAudio = false;
     updatePlayButton();
     DOM.audio.pause();
+    await saveProgress();
 }
 
-function stopPlaying() {
+async function stopPlaying() {
     state.isPlaying = false;
     state.isGeneratingAudio = false;
     state.audioPlaybackId++;
+    await saveProgress();
     updatePlayButton();
 
     const audio = DOM.audio;
