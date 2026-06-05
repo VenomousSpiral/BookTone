@@ -172,8 +172,8 @@ function openFileSettingsPanel(file) {
     panel.innerHTML = `
         <div class="modal-content" style="max-width: 800px; width: 95%; max-height: 90vh; overflow-y: auto; margin: auto;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--border-color);">
-                <div>
-                    <h2 style="margin: 0 0 5px 0; font-size: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${isEbook ? '\uD83C\uDFB5' : '\uD83D\uDCC1'} ${bookTitle}</h2>
+                <div style="min-width: 0; /* allow title to shrink below content width */">
+                    <h2 style="margin: 0 0 5px 0; font-size: 24px; overflow-wrap: break-word;">${isEbook ? '\uD83C\uDFB5' : '\uD83D\uDCC1'} ${bookTitle}</h2>
                     <p style="margin: 0; color: var(--text-secondary); font-size: 14px;">${file.is_directory ? 'Folder' : 'File'} \u00B7 ${file.is_directory ? '' : formatBytes(file.size)}</p>
                 </div>
                 <button onclick="closeFileSettingsPanel()" style="background: none; border: none; font-size: 28px; cursor: pointer; color: var(--text-secondary); padding: 5px 10px;">\u2715</button>
@@ -201,7 +201,7 @@ function openFileSettingsPanel(file) {
             ${isEbook ? `
                 <div id="audiobookManagementSection">
                     <h3 style="margin: 0 0 15px 0; font-size: 18px;">\uD83D\udcDA Audiobook Cache Management</h3>
-                    <div id="audiobookContent" style="padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+                    <div id="audiobookContent" style="padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px; overflow-wrap: break-word; word-break: break-all;">
                         <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Loading cache info...</div>
                     </div>
                 </div>
@@ -257,8 +257,7 @@ function loadAndRenderAudiobookStatus(ebookPath) {
             let html = '';
             const totalCacheSize = info.caches.reduce((sum, c) => sum + c.size_mb, 0);
             html += `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 13px; color: var(--text-secondary);">
-                    <span>\uD83D\udcDA ${info.title}</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 13px; color: var(--text-secondary);"><span style="min-width: 0; overflow-wrap: break-word;">\uD83D\udcDA ${info.title}</span>
                     <span>${info.total_chunks} chunks \u00B7 ${totalCacheSize.toFixed(1)} MB total</span>
                 </div>
             `;
@@ -303,8 +302,7 @@ function loadAndRenderAudiobookStatus(ebookPath) {
 
                 html += `
                     <div style="margin-bottom: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid ${cache.status === 'completed' ? '#66bb6a' : cache.status === 'in_progress' ? '#4fc3f7' : '#f44'};">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                            <div>
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;"><div style="min-width: 0;">
                                 <span style="font-size: 16px; font-weight: bold;">${statusIcon} ${cache.model}</span>
                                 <span style="color: var(--text-secondary); margin-left: 8px;">/ ${cache.voice}</span>
                             </div>
@@ -361,9 +359,9 @@ function showGenerateCacheModal(ebookPath) {
     modal.style.zIndex = '10003';
 
     modal.innerHTML = `
-        <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-content" style="max-width: 500px; overflow-x: hidden; box-sizing: border-box;">
             <h2>\uD83C\uDFB5 Generate Audiobook</h2>
-            <p style="margin-bottom: 15px; color: var(--text-secondary);">${ebookPath}</p>
+            <p style="margin-bottom: 15px; color: var(--text-secondary); word-break: break-all;">${ebookPath}</p>
 
             <label for="genCacheModel">Model:</label>
             <select id="genCacheModel" required onchange="updateGenCacheVoices()" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
