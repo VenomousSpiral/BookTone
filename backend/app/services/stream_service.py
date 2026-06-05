@@ -131,9 +131,8 @@ class StreamService:
     def get_progress(self, ebook_path: str) -> StreamProgress:
         """Return a StreamProgress populated from the SQLite tables.
 
-        Current chunk comes from profiles.last_position (primary source).
-        As a fallback it also reads max bookmarked index for backward compat.
-        Bookmarks are read separately so they never collide with progress data.
+        Current chunk comes exclusively from profiles.last_position (primary source).
+        Bookmarks are collected but do NOT influence playback position.
         """
         self._ensure_progress_schema()
         conn = self._get_db_conn()
@@ -155,12 +154,10 @@ class StreamService:
                 (ebook_path,),
             ).fetchall()
 
-            # 3. Collect user-created bookmark entries.
+            # 3. Collect user-created bookmark entries (do NOT influence current_chunk).
             bm_dict: Dict[str, str] = {}
             for row in bm_rows:
                 ci = int(row["chunk_index"])
-                if ci >= current_chunk:
-                    current_chunk = ci
                 bm_dict[str(ci)] = str(row["text_preview"]) or ""
         except Exception:
             pass  # keep defaults: current_chunk=0, bookmarks={}
