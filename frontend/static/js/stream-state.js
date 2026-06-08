@@ -72,6 +72,7 @@ const DOM = {
     get bookTitle() { return document.getElementById('bookTitle'); },
     get totalProgress() { return document.getElementById('totalProgress'); },
     get currentPosition() { return document.getElementById('currentPosition'); },
+    get progressBar() { return document.getElementById('progressBar'); },
     get timeEstimate() { return document.getElementById('timeEstimate'); },
     get loadingOverlay() { return document.getElementById('loadingOverlay'); },
     modal: (type) => document.getElementById(`${type}Modal`),

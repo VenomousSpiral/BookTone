@@ -98,16 +98,17 @@ function showProgressOverlay(formatType) {
     overlay.innerHTML = `
         <div class="loading-overlay" style="display:flex;">
             <div class="loading-spinner">
-                <!-- Format badge -->
-                <div id="formatBadgeOuter" style="margin-bottom:16px;">
-                    <span style="padding:4px 12px;background:#ff950a;color:#fff;border-radius:12px;font-size:12px;font-weight:bold;">${formatType.toUpperCase()}</span>
+                <div id="progressBarOuter" style="width:100%;margin-bottom:12px;display:none;">
+                    <div style="background:var(--bg-tertiary);border-radius:4px;height:8px;overflow:hidden;margin-bottom:6px;">
+                        <div id="progressBarInner" style="height:100%;width:0%;background:#ff950a;transition:width 0.3s;"></div>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;font-size:12px;">
+                        <span id="progressPct">0%</span>  
+                        <span id="formatBadge">${formatType.toUpperCase()}</span>
+                    </div>
                 </div>
-                <!-- Spinner -->
                 <div class="spinner"></div>
-                <!-- Enhanced message area for encoding info -->
-                <div id="progressMessageOuter" style="margin-top:16px;min-height:48px;display:flex;flex-direction:column;align-items:center;gap:4px;">
-                    <span id="progressStatusText" style="font-size:13px;color:var(--text-secondary);">Starting conversion...</span>
-                </div>
+                <div id="progressMessage" style="margin-top:12px;">Starting conversion...</div>
             </div>
         </div>
     `;
@@ -117,33 +118,22 @@ function showProgressOverlay(formatType) {
 
 /** Update the progress overlay with job data */  
 function updateProgressUI(job) {
-    const statusTextEl = document.getElementById('progressStatusText');
-    const messageOuter = document.getElementById('progressMessageOuter');
-    if (!statusTextEl || !messageOuter) return;
-
-    if (job.status === 'converting' && job.message) {
-        // Enhance the encoding message — make it prominent with monospace size/time display
-        statusTextEl.style.fontSize = '15px';
-        statusTextEl.style.fontWeight = 'bold';
-        statusTextEl.style.color = '#ff950a';
+    const pctEl = document.getElementById('progressPct');
+    const barInner = document.getElementById('progressBarInner');  
+    const msgEl = document.getElementById('progressMessage');
+    const barOuter = document.getElementById('progressBarOuter');
+    
+    if (job.status === 'converting' && job.progress_pct > 0) {
+        // Show progress bar for active conversions
+        barOuter.style.display = 'block';
+        pctEl.textContent = `${job.progress_pct}%`;
+        barInner.style.width = `${job.progress_pct}%`;
         
-        // Detect patterns like "Encoding to MP4... 2h3m" or "Encoding... 55770 KB"
-        const hasTimeInfo = job.message.includes('...');
-        if (hasTimeInfo) {
-            messageOuter.innerHTML = `
-                <span style="font-size:16px;font-weight:bold;color:#ff950a;">${job.message}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">⏳ Converting...</span>
-            `;
-        } else {
-            messageOuter.innerHTML = `
-                <span style="font-size:16px;font-weight:bold;color:#ff950a;">${job.message}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">⏳ Converting...</span>
-            `;
-        }
-    } else if (job.status === 'converting') {
-        statusTextEl.textContent = job.message || 'Converting...';
+        if (msgEl) msgEl.textContent = job.message || 'Converting...';
     } else {
-        messageOuter.innerHTML = `<span id="progressStatusText" style="font-size:13px;color:var(--text-secondary);">${job.message}</span>`;
+        // Don't show progress bar for initial pending state  
+        barOuter.style.display = 'none';
+        if (msgEl) msgEl.textContent = job.message;
     }
 }
 

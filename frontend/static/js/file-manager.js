@@ -1094,15 +1094,19 @@ function showDownloadProgressOverlay(formatType) {
     
     overlay.innerHTML = `
         <div style="background:var(--bg-primary); border-radius:12px; padding:32px; min-width:280px; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.5);">
-            <!-- Format badge -->
-            <div style="margin-bottom:16px;">
-                <span style="padding:4px 12px;background:#ff950a;color:#fff;border-radius:12px;font-size:12px;font-weight:bold;">${formatType.toUpperCase()}</span>
+            <div id="_fm_progressBarOuter" style="width:100%;margin-bottom:16px;display:none;">
+                <div style="background:var(--bg-tertiary);border-radius:4px;height:8px;overflow:hidden;margin-bottom:8px;">
+                    <div id="_fm_progressBarInner" style="height:100%;width:0%;background:#ff950a;transition:width 0.3s;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);">
+                    <span id="_fm_progressPct">0%</span>  
+                    <span id="_fm_formatBadge">${formatType.toUpperCase()}</span>
+                </div>
             </div>
             <!-- Inline spinner (no CSS dependency) -->
-            <div id="_fm_spinner" style="width:48px;height:48px;border:4px solid var(--border-color); border-top-color:#ff950a; border-radius:50%; animation:_fm_spin 0.8s linear infinite; margin:0 auto 16px;"></div>
+            <div style="width:48px;height:48px;border:4px solid var(--border-color); border-top-color:#ff950a; border-radius:50%; animation:_fm_spin 0.8s linear infinite; margin:0 auto 16px;"></div>
             <style>@keyframes _fm_spin{to{transform:rotate(360deg)}}</style>
-            <!-- Enhanced message area for encoding info -->
-            <div id="_fm_progressMessageOuter" style="min-height:48px;display:flex;flex-direction:column;align-items:center;gap:4px;"></div>
+            <div id="_fm_progressMessage" style="font-size:14px;color:var(--text-primary);">Starting conversion...</div>
         </div>
     `;
     
@@ -1112,27 +1116,22 @@ function showDownloadProgressOverlay(formatType) {
 
 /** Update the download progress overlay with job data */  
 function updateDownloadProgressUI(job) {
-    const messageOuter = document.getElementById('_fm_progressMessageOuter');
-    if (!messageOuter) return;
-
-    if (job.status === 'converting' && job.message) {
-        // Enhance the encoding message — make it prominent with monospace size/time display
-        const hasTimeInfo = job.message.includes('...');
-        if (hasTimeInfo) {
-            messageOuter.innerHTML = `
-                <span style="font-size:16px;font-weight:bold;color:#ff950a;">${job.message}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">⏳ Converting...</span>
-            `;
-        } else {
-            messageOuter.innerHTML = `
-                <span style="font-size:16px;font-weight:bold;color:#ff950a;">${job.message}</span>
-                <span style="font-size:12px;color:var(--text-secondary);">⏳ Converting...</span>
-            `;
-        }
-    } else if (job.status === 'converting') {
-        messageOuter.innerHTML = `<span style="font-size:14px;color:var(--text-primary);">${job.message}</span>`;
+    const pctEl = document.getElementById('_fm_progressPct');
+    const barInner = document.getElementById('_fm_progressBarInner');  
+    const msgEl = document.getElementById('_fm_progressMessage');
+    const barOuter = document.getElementById('_fm_progressBarOuter');
+    
+    if (job.status === 'converting' && job.progress_pct > 0) {
+        // Show progress bar for active conversions
+        barOuter.style.display = 'block';
+        pctEl.textContent = `${job.progress_pct}%`;
+        barInner.style.width = `${job.progress_pct}%`;
+        
+        if (msgEl) msgEl.textContent = job.message || 'Converting...';
     } else {
-        messageOuter.innerHTML = `<span style="font-size:13px;color:var(--text-secondary);">${job.message || 'Processing...'}</span>`;
+        // Don't show progress bar for initial pending state  
+        barOuter.style.display = 'none';
+        if (msgEl) msgEl.textContent = job.message;
     }
 }
 
