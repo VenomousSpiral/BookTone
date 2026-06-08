@@ -68,7 +68,6 @@ const DOM = {
     get audio() { return document.getElementById('audioPlayer'); },
     get playBtn() { return document.getElementById('playButton'); },
     get textDisplay() { return document.getElementById('textDisplay'); },
-    get progressBar() { return document.getElementById('progressBar'); },
     get speedControl() { return document.getElementById('speedControl'); },
     get bookTitle() { return document.getElementById('bookTitle'); },
     get totalProgress() { return document.getElementById('totalProgress'); },

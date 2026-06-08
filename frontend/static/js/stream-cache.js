@@ -1,7 +1,210 @@
 // stream-cache.js — Audiobook cache management for the stream page
 // Depends on: stream-state.js (state, API_BASE, EBOOK_PATH, showToast, etc.)
 
-// ========== AUDIOWBOOK PANEL (in settings modal) ==========
+// ========== FORMAT SELECTION MODAL + PROGRESS TRACKING ──────────────────
+
+let currentDownloadJobId = null;
+let downloadPollInterval = null;
+
+/** Show format selection modal when user clicks "Download" */
+function showFormatSelectionModal(model, voice) {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';  // reuse existing .modal CSS from stream.html  
+    overlay.id = 'formatSelectModal';
+    
+    overlay.innerHTML = `
+        <div class="modal-content" style="max-width:400px;">
+            <h2>📥 Download Format</h2>
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Choose your preferred format:</p>
+            
+            <!-- OPUS -->
+            <div class="format-option" onclick="selectFormat('${model}','${voice}','opus')" 
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                <div>
+                    <strong>OPUS (.opus)</strong><br>
+                    <span style="font-size:12px;color:var(--text-secondary)">Lossless concat • Smallest size</span>
+                </div>
+            </div>
+            
+            <!-- M4B -->  
+            <div class="format-option" onclick="selectFormat('${model}','${voice}','m4b')"
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                <div>
+                    <strong>M4B with Chapters (.m4b)</strong><br>
+                    <span style="font-size:12px;color:var(--text-secondary)">AAC re-encode • Chapter metadata embedded</span>
+                </div>
+            </div>
+            
+            <!-- MP3 -->
+            <div class="format-option" onclick="selectFormat('${model}','${voice}','mp3')"
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                <div>
+                    <strong>MPEG-3 (.mp3)</strong><br>  
+                    <span style="font-size:12px;color:var(--text-secondary)">Re-encoded mono • Universal compatibility</span>
+                </div>
+            </div>
+            
+            <!-- Cancel -->
+            <button type="button" onclick="closeFormatModal()" class="btn btn-primary" 
+                    style="margin-top:8px;width:100%;padding:10px;">Cancel</button>
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+}
+
+function closeFormatModal() {
+    const el = document.getElementById('formatSelectModal');
+    if (el) el.remove();
+}
+
+/** Called when user selects a format — starts conversion + shows progress */
+async function selectFormat(model, voice, formatType) {
+    closeFormatModal();
+    
+    showToast(`Starting ${formatType.toUpperCase()} download...`);
+    showProgressOverlay(formatType);
+    
+    try {
+        // 1. Start the job  
+        const params = new URLSearchParams({
+            ebook_path: EBOOK_PATH, model: model, voice: voice, format_type: formatType
+        });
+        
+        const res = await fetch(`${API_BASE}/stream/download-start?${params}`, { method: 'POST' });
+        
+        if (!res.ok) throw new Error('Failed to start download');  
+        const job = await res.json();
+        
+        currentDownloadJobId = job.job_id;
+        
+        // 2. Start polling for progress updates (every second during conversion)
+        pollProgress(job.job_id);
+    } catch (error) {
+        hideProgressOverlay();
+        showToast('Error: ' + error.message, true);
+        console.error('[DOWNLOAD] Error starting download:', error);
+    }
+}
+
+/** Show a progress overlay with real-time updates */
+function showProgressOverlay(formatType) {
+    const existing = document.getElementById('downloadProgressModal');
+    if (existing) existing.remove();  // safety: remove any leftover
+    
+    const overlay = document.createElement('div');
+    overlay.id = 'downloadProgressModal';
+    
+    overlay.innerHTML = `
+        <div class="loading-overlay" style="display:flex;">
+            <div class="loading-spinner">
+                <!-- Format badge -->
+                <div id="formatBadgeOuter" style="margin-bottom:16px;">
+                    <span style="padding:4px 12px;background:#ff950a;color:#fff;border-radius:12px;font-size:12px;font-weight:bold;">${formatType.toUpperCase()}</span>
+                </div>
+                <!-- Spinner -->
+                <div class="spinner"></div>
+                <!-- Enhanced message area for encoding info -->
+                <div id="progressMessageOuter" style="margin-top:16px;min-height:48px;display:flex;flex-direction:column;align-items:center;gap:4px;">
+                    <span id="progressStatusText" style="font-size:13px;color:var(--text-secondary);">Starting conversion...</span>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+}
+
+/** Update the progress overlay with job data */  
+function updateProgressUI(job) {
+    const statusTextEl = document.getElementById('progressStatusText');
+    const messageOuter = document.getElementById('progressMessageOuter');
+    if (!statusTextEl || !messageOuter) return;
+
+    if (job.status === 'converting' && job.message) {
+        // Enhance the encoding message — make it prominent with monospace size/time display
+        statusTextEl.style.fontSize = '15px';
+        statusTextEl.style.fontWeight = 'bold';
+        statusTextEl.style.color = '#ff950a';
+        
+        // Detect patterns like "Encoding to MP4... 2h3m" or "Encoding... 55770 KB"
+        const hasTimeInfo = job.message.includes('...');
+        if (hasTimeInfo) {
+            messageOuter.innerHTML = `
+                <span style="font-size:16px;font-weight:bold;color:#ff950a;">${job.message}</span>
+                <span style="font-size:12px;color:var(--text-secondary);">⏳ Converting...</span>
+            `;
+        } else {
+            messageOuter.innerHTML = `
+                <span style="font-size:16px;font-weight:bold;color:#ff950a;">${job.message}</span>
+                <span style="font-size:12px;color:var(--text-secondary);">⏳ Converting...</span>
+            `;
+        }
+    } else if (job.status === 'converting') {
+        statusTextEl.textContent = job.message || 'Converting...';
+    } else {
+        messageOuter.innerHTML = `<span id="progressStatusText" style="font-size:13px;color:var(--text-secondary);">${job.message}</span>`;
+    }
+}
+
+/** Poll download-progress endpoint every second during conversion */
+function pollProgress(jobId) {
+    const poll = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/stream/download-progress/${jobId}`);  
+            
+            if (!res.ok) throw new Error('Failed to get progress');  
+            
+            const job = await res.json();
+            updateProgressUI(job);
+            
+            // Completed or failed — stop polling, handle result  
+            if (job.status === 'ready') {
+                clearInterval(downloadPollInterval);
+                hideProgressOverlay();
+                
+                showToast(`Download ready! Starting download as .${job.format_type}`);
+                setTimeout(() => downloadByJobId(job.job_id), 500);
+                currentDownloadJobId = null;
+            } else if (job.status === 'failed') {
+                clearInterval(downloadPollInterval);  
+                hideProgressOverlay();
+                
+                const errorMsg = job.error_message || 'Conversion failed';
+                showToast(`Conversion failed: ${errorMsg}`, true);
+                console.log('[DOWNLOAD] Job failed:', job);
+                currentDownloadJobId = null;
+            }
+        } catch (error) {
+            // Don't show toast — polling errors are expected between updates  
+            console.error('[PROGRESS POLL] Error:', error);
+        }
+    };
+    
+    poll();  // First poll immediately
+    downloadPollInterval = setInterval(poll, 1000);  // Poll every second during conversion
+}
+
+/** Download the completed file by job ID */
+async function downloadByJobId(jobId) {
+    const url = `${API_BASE}/stream/download/${jobId}`;  
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = '';  // Let server determine filename from Content-Disposition header
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+function hideProgressOverlay() {
+    const el = document.getElementById('downloadProgressModal');
+    if (el) el.remove();
+    if (downloadPollInterval) { clearInterval(downloadPollInterval); downloadPollInterval = null; }
+}
+
+
+// ========== AUDIOWBOOK PANEL (in settings modal) ────────────────────────
 
 async function loadAudiobookProfiles() {
     try {
@@ -28,7 +231,7 @@ function renderAudiobookPanel(data) {
                 <span style="color:#888;">No audiobook cache found</span>
             </div>
             <button type="button" onclick="startAudiobookGeneration()" class="btn btn-primary" style="padding:6px 12px;font-size:12px;width:100%;">
-                \uD83C\uDFB5 Generate Audiobook
+                🎵 Generate Audiobook
             </button>
         `;
         return;
@@ -39,45 +242,46 @@ function renderAudiobookPanel(data) {
     if (caches.length > 1) {
         html += '<select id="profileSelector" onchange="switchProfile(this.value)" style="width:100%;padding:6px;margin-bottom:8px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;">';
         caches.forEach(c => {
-            const statusIcon = c.status === 'completed' ? '\uD83D\uDFE2' : c.status === 'in_progress' ? '\u23F3' : c.status === 'paused' ? '\u23F8\uFE0F' : '\u274C';
+            const statusIcon = c.status === 'completed' ? '🟢' : c.status === 'in_progress' ? '⏳' : c.status === 'paused' ? '⏸️' : '❌';
             html += `<option value="${c.model}_${c.voice}">${c.model} / ${c.voice} (${c.completed_chunks}/${c.total_chunks}) ${statusIcon}</option>`;
         });
         html += '</select>';
     }
 
     const activeCache = caches[0];
-    const statusText = activeCache.status === 'completed' ? '\u2705 All chunks generated' :
-                       activeCache.status === 'in_progress' ? `\u23F3 Generating... ${Math.round(activeCache.progress)}%` :
-                       activeCache.status === 'paused' ? '\u23F8\uFE0F Paused' :
-                       activeCache.status === 'failed' ? '\u274C Failed' : activeCache.status;
+    const statusText = activeCache.status === 'completed' ? '✅ All chunks generated' :
+                       activeCache.status === 'in_progress' ? `⏳ Generating... ${Math.round(activeCache.progress)}%` :
+                       activeCache.status === 'paused' ? '⏸️ Paused' :
+                       activeCache.status === 'failed' ? '❌ Failed' : activeCache.status;
 
     html += `<div style="margin-bottom:8px;font-size:12px;">`;
     html += `<strong>${statusText}</strong><br>`;
-    html += `<span style="color:#666;">${activeCache.model} / ${activeCache.voice} \u00B7 ${activeCache.completed_chunks}/${activeCache.total_chunks} chunks \u00B7 ${activeCache.size_mb} MB</span>`;
+    html += `<span style="color:#666;">${activeCache.model} / ${activeCache.voice} · ${activeCache.completed_chunks}/${activeCache.total_chunks} chunks · ${activeCache.size_mb} MB</span>`;
     html += `</div>`;
 
     html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
 
     if (activeCache.status === 'completed') {
-        html += `<button type="button" onclick="prepareDownload('${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:11px;">\u2B07\uFE0F Download OPUS</button>`;
-        html += `<button type="button" onclick="downloadSource()" class="btn" style="padding:4px 8px;font-size:11px;">\u2B07\uFE0F Source</button>`;
-        html += `<button type="button" onclick="handleCacheRegenerate('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:11px;">\uD83D\uDD04 Regenerate</button>`;
+        // CHANGED: Use format selection modal instead of direct OPUS download
+        html += `<button type="button" onclick="showFormatSelectionModal('${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:11px;">📥 Download...</button>`;
+        html += `<button type="button" onclick="downloadSource()" class="btn" style="padding:4px 8px;font-size:11px;">⬇️ Source</button>`;
+        html += `<button type="button" onclick="handleCacheRegenerate('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:12px;">🔄 Regenerate</button>`;
     }
 
     if (activeCache.status === 'in_progress') {
-        html += `<button type="button" onclick="handleCachePause('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:11px;">\u23F8\uFE0F Pause</button>`;
+        html += `<button type="button" onclick="handleCachePause('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:12px;">⏸️ Pause</button>`;
     } else if (activeCache.status === 'paused' || activeCache.status === 'failed') {
-        html += `<button type="button" onclick="handleCacheResume('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:11px;">\u25B6\uFE0F Resume</button>`;
+        html += `<button type="button" onclick="handleCacheResume('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:12px;">▶️ Resume</button>`;
     }
 
-    html += `<button type="button" onclick="handleCacheDelete('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn btn-danger" style="padding:4px 8px;font-size:11px;">\uD83D\uDDD1\uFE0F</button>`;
+    html += `<button type="button" onclick="handleCacheDelete('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn btn-danger" style="padding:4px 8px;font-size:12px;">🗑️</button>`;
     html += '</div>';
 
     if (caches.length > 1) {
         html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border-color);">';
         caches.forEach(c => {
-            const icon = c.status === 'completed' ? '\u2705' : c.status === 'in_progress' ? '\u23F3' : c.status === 'paused' ? '\u23F8\uFE0F' : '\u274C';
-            html += `<div style="font-size:11px;padding:3px 0;">${icon} ${c.model}/${c.voice} \u00B7 ${c.completed_chunks}/${c.total_chunks} \u00B7 ${c.size_mb} MB</div>`;
+            const icon = c.status === 'completed' ? '✅' : c.status === 'in_progress' ? '⏳' : c.status === 'paused' ? '⏸️' : '❌';
+            html += `<div style="font-size:12px;padding:3px 0;">${icon} ${c.model}/${c.voice} · ${c.completed_chunks}/${c.total_chunks} · ${c.size_mb} MB</div>`;
         });
         html += '</div>';
     }
@@ -95,7 +299,7 @@ function renderAudiobookPanel(data) {
     }
 }
 
-// ========== CACHE OPERATIONS ==========
+// ========== CACHE OPERATIONS ────────────────────────────────────────────
 
 async function startAudiobookGeneration() {
     const model = state.settings.preferred_model;
@@ -137,16 +341,12 @@ async function handleCachePause(ebookPath, model, voice) {
 
 /** Resume generation for a cache entry */
 async function handleCacheResume(ebookPath, model, voice) {
-    try {
-        const res = await fetch(`${API_BASE}/stream/cache-resume?ebook_path=${encodeURIComponent(ebookPath)}&model=${model}&voice=${voice}`, {
-            method: 'POST'
-        });
-        if (!res.ok) throw new Error('Failed to resume');
-        showToast('Resuming generation...');
-        await loadAudiobookProfiles();
-    } catch (error) {
-        showToast('Error: ' + error.message);
-    }
+    const res = await fetch(`${API_BASE}/stream/cache-resume?ebook_path=${encodeURIComponent(ebookPath)}&model=${model}&voice=${voice}`, {
+        method: 'POST'
+    });
+    if (!res.ok) throw new Error('Failed to resume');
+    showToast('Resuming generation...');
+    await loadAudiobookProfiles();
 }
 
 /** Delete a cache entry */
@@ -175,73 +375,17 @@ async function handleCacheRegenerate(ebookPath, model, voice) {
         showToast('Regeneration started');
         await loadAudiobookProfiles();
     } catch (error) {
-        showToast('Error: ' + error.message);
+        showToast('Error starting regeneration: ' + error.message);
     }
 }
 
-// ========== DOWNLOADS ==========
-
-async function prepareDownload(model, voice) {
-    showToast('Preparing download...');
-
-    try {
-        const res = await fetch(`${API_BASE}/stream/prepare-download?ebook_path=${encodeURIComponent(EBOOK_PATH)}&model=${model}&voice=${voice}`, {
-            method: 'POST'
-        });
-        if (!res.ok) throw new Error('Failed to prepare download');
-
-        const data = await res.json();
-        if (data.status === 'ready') {
-            showToast('Download ready!');
-            downloadCombined(model, voice);
-        } else {
-            pollDownloadStatus(model, voice);
-        }
-    } catch (error) {
-        showToast('Error: ' + error.message);
-    }
-}
-
-async function pollDownloadStatus(model, voice) {
-    const poll = async () => {
-        try {
-            const res = await fetch(`${API_BASE}/stream/download-status?ebook_path=${encodeURIComponent(EBOOK_PATH)}&model=${model}&voice=${voice}`);
-            if (!res.ok) throw new Error('Failed to get status');
-
-            const data = await res.json();
-            if (data.status === 'ready') {
-                showToast('Download ready!');
-                downloadCombined(model, voice);
-            } else {
-                setTimeout(poll, 2000);
-            }
-        } catch (error) {
-            console.error('[DOWNLOAD] Poll error:', error);
-            setTimeout(poll, 5000);
-        }
-    };
-    poll();
-}
-
-async function downloadCombined(model, voice) {
-    const url = `${API_BASE}/stream/download?ebook_path=${encodeURIComponent(EBOOK_PATH)}&model=${model}&voice=${voice}`;
-    const ebookName = EBOOK_PATH.split('/').pop().replace(/\.[^.]+$/, '');
-    const safeName = ebookName.replace(/[^a-zA-Z0-9\s-]/g, '_');
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${safeName}.opus`;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    showToast('Download started');
-}
+// ========== DOWNLOADS ───────────────────────────────────────────────────
 
 async function downloadSource() {
     const url = `${API_BASE}/stream/download-source?ebook_path=${encodeURIComponent(EBOOK_PATH)}`;
     const a = document.createElement('a');
     a.href = url;
-    a.download = EBOOK_PATH;
+    a.download = EBOOK_PATH.split('/').pop();  // Just the filename part  
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
@@ -266,7 +410,8 @@ async function switchProfile(modelVoiceKey) {
     showToast(`Switched to ${model}/${voice}`);
 }
 
-// ========== CACHE STATUS (in settings modal) ==========
+
+// ========== CACHE STATUS (in settings modal) ────────────────────────────
 
 async function refreshCacheStatus() {
     const contentEl = document.getElementById('cacheStatusContent');
@@ -288,9 +433,9 @@ async function refreshCacheStatus() {
             let html = `<div style="margin-bottom:6px;"><strong>${data.cached_chunks}</strong> cached audio segments (${data.total_size_mb} MB)</div>`;
 
             if (data.model_voice_caches && data.model_voice_caches.length > 0) {
-                html += '<div style="font-size:11px; color:#666;">';
+                html += '<div style="font-size:12px; color:#666;">';
                 data.model_voice_caches.forEach(cache => {
-                    html += `<div style="margin:2px 0;">\u2022 ${cache.model}/${cache.voice}: ${cache.files} files (${cache.size_mb} MB)</div>`;
+                    html += `<div style="margin:2px 0;">• ${cache.model}/${cache.voice}: ${cache.files} files (${cache.size_mb} MB)</div>`;
                 });
                 html += '</div>';
             }
@@ -303,3 +448,18 @@ async function refreshCacheStatus() {
         console.error('Cache status error:', error);
     }
 }
+
+// ========== EXPORTS ─────────────────────────────────────────────────────
+
+window.showFormatSelectionModal = showFormatSelectionModal;
+window.closeFormatModal = closeFormatModal;
+window.selectFormat = selectFormat;
+window.downloadByJobId = downloadByJobId;
+window.loadAudiobookProfiles = loadAudiobookProfiles;
+window.startAudiobookGeneration = startAudiobookGeneration;
+window.handleCachePause = handleCachePause;
+window.handleCacheResume = handleCacheResume;
+window.handleCacheDelete = handleCacheDelete;
+window.handleCacheRegenerate = handleCacheRegenerate;
+window.downloadSource = downloadSource;
+window.switchProfile = switchProfile;

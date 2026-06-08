@@ -102,7 +102,6 @@ function updateProgress() {
         const remaining = remainingChars / CHARS.PER_SECOND / speed;
         const total = chapter.length / CHARS.PER_SECOND / speed;
 
-        DOM.progressBar.value = Math.max(0, Math.min(100, progressPercent));
         DOM.totalProgress.textContent = `${Math.round(progressPercent)}% (Ch)`;
         DOM.currentPosition.textContent = `Chunk ${chapterCurrentChunk + 1} / ${chapterChunks} in chapter`;
         DOM.timeEstimate.textContent = state.timeMode === 'remaining'
@@ -124,7 +123,6 @@ function updateProgressBookMode(speed) {
     const remaining = remainingChars / CHARS.PER_SECOND / speed;
     const total = state.book.total_chars / CHARS.PER_SECOND / speed;
 
-    DOM.progressBar.value = progressPercent;
     DOM.totalProgress.textContent = `${Math.round(progressPercent)}%`;
     DOM.currentPosition.textContent = `Chunk ${state.currentChunk + 1} / ${state.book.total_chunks}`;
     DOM.timeEstimate.textContent = state.timeMode === 'remaining'
@@ -768,15 +766,10 @@ function updateSleepTimer() {
     saveSettingsToServer();
 }
 
-// ========== PROGRESS BAR ==========
-
-function onProgressBarDrag(value) {
-    updateProgressVisual(parseFloat(value));
-}
-
-function onProgressBarRelease(value) {
-    seekToPosition(parseFloat(value));
-}
+// Progress bar slider removed — indicators (chunk/time/%) remain.
+// Kept as no-ops for backward compat with any inline handlers still firing.
+function onProgressBarDrag(_value) { /* slider removed */ }
+function onProgressBarRelease(_value) { /* slider removed */ }
 
 // ========== MODAL CLOSE HELPERS ==========
 

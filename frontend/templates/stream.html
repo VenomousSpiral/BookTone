@@ -353,19 +353,7 @@
                 font-size: 18px !important;
             }
             
-            .progress-bar {
-                height: 10px;
-            }
-            
-            .progress-bar::-webkit-slider-thumb {
-                width: 24px;
-                height: 24px;
-            }
-            
-            .progress-bar::-moz-range-thumb {
-                width: 24px;
-                height: 24px;
-            }
+
             
             .progress-info {
                 font-size: 10px;
@@ -457,26 +445,11 @@
             </div>
         </div>
         
-        <!-- Progress Bar Container (separate from audio controls) -->
-        <div id="progressBarContainer" style="padding: 5px 10px; background-color: var(--bg-secondary);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
-                <span id="currentPosition" style="font-size: 11px; color: var(--text-secondary);">Chunk 0 / 0</span>
-                <span id="timeEstimate" style="font-size: 11px; color: var(--text-secondary);">~0:00 / ~0:00</span>
-                <span id="totalProgress" style="font-size: 11px; color: var(--text-secondary);">0%</span>
-            </div>
-            <input type="range" 
-                   class="progress-bar" 
-                   id="progressBar" 
-                   min="0" 
-                   max="100" 
-                   value="0"
-                   style="width: 100%; cursor: pointer;"
-                   oninput="onProgressBarDrag(this.value)"
-                   onchange="onProgressBarRelease(this.value)"
-                   onmousedown="this.dataset.seeking='true'"
-                   onmouseup="this.dataset.seeking='false'"
-                   ontouchstart="this.dataset.seeking='true'"
-                   ontouchend="this.dataset.seeking='false'">
+        <!-- Playback Status Indicators (no slider) -->
+        <div id="progressBarContainer" style="padding: 5px 10px; background-color: var(--bg-secondary); display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <span id="currentPosition" style="font-size: 11px; color: var(--text-secondary);"></span>
+            <span id="timeEstimate" style="font-size: 11px; color: var(--text-secondary);"></span>
+            <span id="totalProgress" style="font-size: 11px; color: var(--text-secondary);"></span>
         </div>
         
         <!-- Audio Controls -->
@@ -604,7 +577,7 @@
                 </div>
                 
                 <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-                    <label for="showProgressBarToggle" style="margin: 0;">Show Progress Bar</label>
+                    <label for="showProgressBarToggle" style="margin: 0;">Show Progress Indicators</label>
                     <input type="checkbox" id="showProgressBarToggle" onchange="toggleProgressBar()" checked style="width: 20px; height: 20px; cursor: pointer;">
                 </div>
                 

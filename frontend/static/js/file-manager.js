@@ -290,7 +290,7 @@ function loadAndRenderAudiobookStatus(ebookPath) {
                 let actionButtons = '';
                 if (cache.status === 'completed') {
                     actionButtons += `
-                        <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="prepareAudiobookDownload('${ebookPath}', '${cache.model}', '${cache.voice}')">\u2B07\uFE0F Download OPUS</button>
+                        <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="showDownloadFormatModal('${ebookPath}', '${cache.model}', '${cache.voice}')">\u2B07\uFE0F Download...</button>
                         <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheRegenerate('${ebookPath}', '${cache.model}', '${cache.voice}')">\uD83D\uDD04 Regenerate</button>
                     `;
                 } else if (cache.status === 'in_progress') {
@@ -984,62 +984,224 @@ async function handleFileUpload(event) {
     event.target.value = '';
 }
 
-// ========== PREPARE & DOWNLOAD OPUS (file-manager settings panel) ==========
+// ========== FORMAT SELECTION MODAL + PROGRESS TRACKING (file-manager) ==========
 
-async function prepareAudiobookDownload(ebookPath, model, voice) {
-    showToast('Preparing download...');
+// ========== DOWNLOAD STATE (module-scoped) ==========
 
-    try {
-        const res = await fetch(`${API_BASE}/stream/prepare-download?ebook_path=${encodeURIComponent(ebookPath)}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}`, {
-            method: 'POST'
-        });
-        if (!res.ok) throw new Error('Failed to prepare download');
+let downloadPollInterval = null;    // Interval ID for polling download progress
+let _downloadProgressModalRef = null; // Reference to the progress overlay element
+let _fm_downloadParams = null;  // Shared state for format selection modal
 
-        const data = await res.json();
-        if (data.status === 'ready') {
-            showToast('Download ready!');
-            downloadAudiobook(ebookPath, model, voice);
-        } else {
-            pollDownloadStatus(ebookPath, model, voice);
-        }
-    } catch (error) {
-        showToast('Error: ' + error.message);
+/** Show the same format selection modal from stream-cache.js */
+function showDownloadFormatModal(ebookPath, model, voice) {
+    window._downloadParams = { ebookPath, model, voice };
+    
+    const existingOverlay = document.getElementById('_fm_formatSelectModal');
+    if (existingOverlay) existingOverlay.remove();
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'modal';
+    overlay.id = '_fm_formatSelectModal';
+    overlay.style.cssText = 'display: flex; z-index: 10002;';
+    
+    // Store params on the modal for later retrieval
+    overlay.dataset.ebookPath = ebookPath;
+    overlay.dataset.model = model;
+    overlay.dataset.voice = voice;
+    
+    overlay.innerHTML = `
+        <div class="modal-content" style="max-width:400px;">
+            <h2>📥 Download Format</h2>
+            <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Choose your preferred format:</p>
+            
+            <!-- OPUS -->
+            <div class="format-option" onclick="startFormatConversion('opus')"
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                <div>
+                    <strong>OPUS (.opus)</strong><br>
+                    <span style="font-size:12px;color:var(--text-secondary)">Lossless concat • Smallest size</span>
+                </div>
+            </div>
+            
+            <!-- M4B -->  
+            <div class="format-option" onclick="startFormatConversion('m4b')"
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                <div>
+                    <strong>M4B with Chapters (.m4b)</strong><br>
+                    <span style="font-size:12px;color:var(--text-secondary)">AAC re-encode • Chapter metadata embedded</span>
+                </div>
+            </div>
+            
+            <!-- MP3 -->
+            <div class="format-option" onclick="startFormatConversion('mp3')"
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                <div>
+                    <strong>MPEG-3 (.mp3)</strong><br>  
+                    <span style="font-size:12px;color:var(--text-secondary)">Re-encoded mono • Universal compatibility</span>
+                </div>
+            </div>
+            
+            <!-- Cancel -->
+            <button type="button" onclick="closeFormatMenu()" class="btn btn-primary"
+                    style="margin-top:8px;width:100%;padding:10px;">Cancel</button>
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+}
+
+function closeFormatMenu() {
+    const el = document.getElementById('_fm_formatSelectModal');
+    if (el) {
+        el.style.display = 'none';
+        el.classList.remove('active');
+        setTimeout(() => el.remove(), 300);
     }
 }
 
-async function pollDownloadStatus(ebookPath, model, voice) {
-    const poll = async () => {
-        try {
-            const res = await fetch(`${API_BASE}/stream/download-status?ebook_path=${encodeURIComponent(ebookPath)}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}`);
-            if (!res.ok) throw new Error('Failed to get status');
+/** Called when user selects a format from the menu */
+async function startFormatConversion(formatType) {
+    const params = window._downloadParams;
+    closeFormatMenu();
+    
+    showToast(`Starting ${formatType.toUpperCase()} download...`);
+    showDownloadProgressOverlay(formatType);
+    
+    try {
+        // 1. Start the job
+        const res = await fetch(`${API_BASE}/stream/download-start?ebook_path=${encodeURIComponent(params.ebookPath)}&model=${params.model}&voice=${params.voice}&format_type=${formatType}`, { method: 'POST' });
+        
+        if (!res.ok) throw new Error('Failed to start download');  
+        const job = await res.json();
 
-            const data = await res.json();
-            if (data.status === 'ready') {
-                showToast('Download ready!');
-                downloadAudiobook(ebookPath, model, voice);
-            } else {
-                setTimeout(poll, 2000);
-            }
-        } catch (error) {
-            console.error('[DOWNLOAD] Poll error:', error);
-            setTimeout(poll, 5000);
-        }
-    };
-    poll();
+        // 2. Start polling for progress updates (every second during conversion)
+        pollDownloadProgress(job.job_id, params.ebookPath);
+    } catch (error) {
+        hideDownloadProgressOverlay();
+        showToast('Error: ' + error.message, true);
+        console.error('[DOWNLOAD] Error starting download:', error);
+    }
 }
 
-function downloadAudiobook(ebookPath, model, voice) {
-    const ebookName = ebookPath.split('/').pop().replace(/\.[^.]+$/, '');
-    const safeName = ebookName.replace(/[^a-zA-Z0-9\s-]/g, '_');
-    const url = `${API_BASE}/stream/download?ebook_path=${encodeURIComponent(ebookPath)}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}`;
+/** Show a progress overlay with real-time updates */  
+function showDownloadProgressOverlay(formatType) {
+    const existing = document.getElementById('_fm_downloadProgressModal');
+    if (existing) existing.remove();  // safety: remove any leftover
+    
+    const overlay = document.createElement('div');
+    overlay.id = '_fm_downloadProgressModal';
+    overlay.style.cssText = 'display:flex; z-index:10003; position:fixed; top:0;left:0;width:100%;height:100%; background:rgba(0,0,0,0.6); align-items:center; justify-content:center;';
+    
+    overlay.innerHTML = `
+        <div style="background:var(--bg-primary); border-radius:12px; padding:32px; min-width:280px; text-align:center; box-shadow:0 20px 60px rgba(0,0,0,0.5);">
+            <!-- Format badge -->
+            <div style="margin-bottom:16px;">
+                <span style="padding:4px 12px;background:#ff950a;color:#fff;border-radius:12px;font-size:12px;font-weight:bold;">${formatType.toUpperCase()}</span>
+            </div>
+            <!-- Inline spinner (no CSS dependency) -->
+            <div id="_fm_spinner" style="width:48px;height:48px;border:4px solid var(--border-color); border-top-color:#ff950a; border-radius:50%; animation:_fm_spin 0.8s linear infinite; margin:0 auto 16px;"></div>
+            <style>@keyframes _fm_spin{to{transform:rotate(360deg)}}</style>
+            <!-- Enhanced message area for encoding info -->
+            <div id="_fm_progressMessageOuter" style="min-height:48px;display:flex;flex-direction:column;align-items:center;gap:4px;"></div>
+        </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    _downloadProgressModalRef = overlay;
+}
+
+/** Update the download progress overlay with job data */  
+function updateDownloadProgressUI(job) {
+    const messageOuter = document.getElementById('_fm_progressMessageOuter');
+    if (!messageOuter) return;
+
+    if (job.status === 'converting' && job.message) {
+        // Enhance the encoding message — make it prominent with monospace size/time display
+        const hasTimeInfo = job.message.includes('...');
+        if (hasTimeInfo) {
+            messageOuter.innerHTML = `
+                <span style="font-size:16px;font-weight:bold;color:#ff950a;">${job.message}</span>
+                <span style="font-size:12px;color:var(--text-secondary);">⏳ Converting...</span>
+            `;
+        } else {
+            messageOuter.innerHTML = `
+                <span style="font-size:16px;font-weight:bold;color:#ff950a;">${job.message}</span>
+                <span style="font-size:12px;color:var(--text-secondary);">⏳ Converting...</span>
+            `;
+        }
+    } else if (job.status === 'converting') {
+        messageOuter.innerHTML = `<span style="font-size:14px;color:var(--text-primary);">${job.message}</span>`;
+    } else {
+        messageOuter.innerHTML = `<span style="font-size:13px;color:var(--text-secondary);">${job.message || 'Processing...'}</span>`;
+    }
+}
+
+/** Hide the download progress overlay and remove it from DOM */
+function hideDownloadProgressOverlay() {
+    if (_downloadProgressModalRef) {
+        _downloadProgressModalRef.style.display = 'none';
+        _downloadProgressModalRef.classList.remove('active');
+        const el = _downloadProgressModalRef;
+        setTimeout(() => { try { el.remove(); } catch(e) {} }, 300);
+        _downloadProgressModalRef = null;
+    }
+}
+
+/** Poll download-progress endpoint every second during conversion */
+function pollDownloadProgress(jobId, ebookPath) {
+    const poll = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/stream/download-progress/${jobId}`);  
+            
+            if (!res.ok) throw new Error('Failed to get progress');  
+            
+            const job = await res.json();
+            updateDownloadProgressUI(job);
+            
+            // Completed or failed — stop polling, handle result
+            if (job.status === 'ready') {
+                clearInterval(downloadPollInterval);  
+                downloadPollInterval = null;
+                hideDownloadProgressOverlay();
+                
+                showToast(`Download ready! Starting download as .${job.format_type}`);
+                setTimeout(() => { try { downloadByJobId(job.job_id); } catch(e) {
+                    console.error('[DOWNLOAD] Download failed:', e);
+                    // Fallback: open in new tab so user can manually save
+                    window.open(`${API_BASE}/stream/download/${job.job_id}`, '_blank');
+                }}, 500);
+            } else if (job.status === 'failed') {
+                clearInterval(downloadPollInterval);
+                downloadPollInterval = null;
+                _downloadProgressModalRef = null; // also clean up reference
+                hideDownloadProgressOverlay();
+                
+                const errorMsg = job.error_message || 'Conversion failed';
+                showToast(`Conversion failed: ${errorMsg}`, true);
+                console.log('[DOWNLOAD] Job failed:', job);
+            }
+        } catch (error) {
+            // Stop polling if the interval was already cleared (job succeeded/failed)
+            if (!downloadPollInterval) return;
+            // Don't show toast — polling errors are expected between updates
+            console.error('[PROGRESS POLL] Error:', error);
+        }
+    };
+    
+    poll();  // First poll immediately
+    downloadPollInterval = setInterval(poll, 1000);  // Poll every second during conversion
+}
+
+/** Download the completed file by job ID */
+async function downloadByJobId(jobId) {
+    const url = `${API_BASE}/stream/download/${jobId}`;  
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${safeName}.opus`;
+    a.download = '';  // Let server determine filename from Content-Disposition header
     a.style.display = 'none';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    showToast('Download started');
 }
 
 // ========== GLOBAL EXPORTS ==========
@@ -1059,7 +1221,10 @@ window.handleCacheRegenerate = handleCacheRegenerate;
 window.handleCacheDelete = handleCacheDelete;
 window.handleCachePause = handleCachePause;
 window.handleCacheResume = handleCacheResume;
-window.prepareAudiobookDownload = prepareAudiobookDownload;
+window.showDownloadFormatModal = showDownloadFormatModal;
+window.closeFormatMenu = closeFormatMenu;
+window.startFormatConversion = startFormatConversion;
+window.downloadByJobId = downloadByJobId;
 
 // Bind form submit
 document.addEventListener('DOMContentLoaded', () => {
