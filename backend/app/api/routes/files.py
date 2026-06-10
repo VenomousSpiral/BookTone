@@ -374,17 +374,34 @@ async def delete_file(file_path: str):
 
 @router.post("/move")
 async def move_file(request: MoveFileRequest):
-    """Move a file to a different directory"""
+    """Move a file or directory to a different location.
+
+    When moving a single ebook file, migrates bookmarks + progress (reading position).
+    When moving a directory containing ebooks, recursively migrates all contained
+    books' bookmarks and reading positions to their new paths.
+    """
     try:
+        # Check if the source is a directory using the same base dir as move_file.
+        _source_abs = settings.EBOOKS_DIR / request.source
+        source_is_dir = _source_abs.is_dir()
         new_path = file_manager.move_file(request.source, request.destination)
 
-        # Migrate bookmarks/progress to the new path
-        stream_service.rename_progress(request.source, str(new_path))
+        if source_is_dir:
+            # Migrate progress for every ebook inside the moved directory tree.
+            migrated = stream_service.rename_progress_recursive(
+                source_path_str=request.source,
+                dest_dir=str(new_path),
+            )
+            logger.info("[MOVE] Directory move: %s -> %s (migrated %d ebooks)",
+                        request.source, new_path, migrated)
+        else:
+            # Single file — migrate its bookmarks + reading position.
+            stream_service.rename_progress(request.source, str(new_path))
 
         return {
-            "message": "File moved successfully",
+            "message": "Moved successfully",
             "old_path": request.source,
-            "new_path": str(new_path)
+            "new_path": str(new_path),
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

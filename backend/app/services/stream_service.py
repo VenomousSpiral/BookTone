@@ -262,16 +262,83 @@ class StreamService:
             return
         conn = self._get_db_conn()
         try:
+            # Migrate bookmarks table.
             conn.execute(
                 "UPDATE bookmarks SET ebook_path=? WHERE ebook_path=?",
+                (new_path, old_path),
+            )
+            # Migrate profiles table (reading position / last_position).
+            conn.execute(
+                "UPDATE profiles SET ebook_path=? WHERE ebook_path=?",
                 (new_path, old_path),
             )
             conn.commit()
             logger.info("[PROGRESS] Migrated progress for %s -> %s", old_path, new_path)
         except Exception as e:
             logger.error("[ERROR] Failed to rename progress: %s", e)
+            conn.rollback()
         finally:
             conn.close()
+
+    def rename_progress_recursive(self, source_path_str: str,
+                                  dest_dir: str) -> int:
+        """Migrate bookmarks + reading position for all ebook files under *source_path_str*
+
+        so that their DB entries point to the path where they now live on disk
+        (*dest_dir*).  Uses SQL REPLACE — deterministic, no filesystem walks,
+        and preserves ALL rows (multiple bookmarks/profiles per file).
+
+        Returns the number of migrated ebook paths.
+        """
+        self._ensure_progress_schema()
+        if source_path_str == dest_dir:
+            return 0
+
+        old_prefix = f"{source_path_str}/"
+        new_base   = dest_dir.rstrip('/')
+        conn = self._get_db_conn()
+        migrated = 0
+        try:
+            # Count how many ebook paths will be affected.
+            rows = list(conn.execute(
+                "SELECT DISTINCT ebook_path FROM bookmarks WHERE ebook_path LIKE ?"
+                    f" UNION SELECT DISTINCT ebook_path FROM profiles "
+                    f"WHERE ebook_path LIKE ?",
+                (f"{old_prefix}%", f"{old_prefix}%")
+            ).fetchall())
+
+            if not rows:
+                return 0
+
+            # Build a mapping from old prefix -> new path for each affected file.
+            all_paths = [str(r["ebook_path"]) for r in rows]
+            replacements: Dict[str, str] = {}
+            for old_ebook in all_paths:
+                remaining = old_ebook[len(old_prefix):]
+                if new_base:
+                    new_ebook = f"{new_base}/{remaining}"
+                else:
+                    new_ebook = remaining
+                replacements[old_ebook] = new_ebook
+
+            for old_ebook, new_ebook in replacements.items():
+                conn.execute(
+                    "UPDATE bookmarks SET ebook_path=? WHERE ebook_path=? AND context='progress'",
+                    (new_ebook, old_ebook),
+                )
+                conn.execute(
+                    "UPDATE profiles SET ebook_path=? WHERE ebook_path=?",
+                    (new_ebook, old_ebook),
+                )
+
+            migrated = len(replacements)
+            conn.commit()
+        except Exception as e:
+            logger.error("[ERROR] Failed to rename progress recursively: %s", e)
+            conn.rollback()
+        finally:
+            conn.close()
+        return migrated
 
     # ------------------------------------------------------------------ #
     #  Path helpers                                                      #
