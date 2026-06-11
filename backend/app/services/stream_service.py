@@ -431,19 +431,23 @@ class StreamService:
         ebook_path: str = None,
         start_char: int = None,
         end_char: int = None,
+        save_to_disk: bool = True,
     ) -> bytes:
         """
         Generate audio for a specific text segment.
         Returns audio data as bytes.
-        Optionally saves to stream cache if setting is enabled.
+
+        Args:
+            save_to_disk: If False, skip cache lookup and disk write entirely
+                (ephemeral/streaming-only mode). Defaults to True.
         """
         logger.debug(
             "[DEBUG] Generating audio - model: %s, voice: %s, text length: %d",
             model, voice, len(text),
         )
 
-        # Check stream cache
-        if ebook_path and start_char is not None and end_char is not None:
+        # Check stream cache (only when saving is enabled)
+        if save_to_disk and ebook_path and start_char is not None and end_char is not None:
             cached = self.get_cached_stream_audio_by_chars(
                 ebook_path, start_char, end_char, model, voice
             )
@@ -481,42 +485,37 @@ class StreamService:
             audio_data = response.read()
             logger.debug("[DEBUG] Generated audio: %d bytes", len(audio_data))
 
-            # Save to stream cache if setting is enabled
-            if ebook_path and start_char is not None and end_char is not None:
-                stream_settings = self.load_settings()
-                if stream_settings.get("save_stream_audio", False):
-                    try:
-                        cache_dir = self.get_cache_dir(ebook_path, model, voice)
-                        logger.info(
-                            "[STREAM CACHE] Saving audio for chars %d-%d -> dir=%s (exists=%s)",
-                            start_char, end_char, cache_dir, cache_dir.exists(),
-                        )
-                        cache_dir.mkdir(parents=True, exist_ok=True)
-                        if not cache_dir.exists():
-                            logger.error(
-                                "[STREAM CACHE ERROR] mkdir failed to create dir: %s",
-                                cache_dir,
-                            )
-                            raise RuntimeError(f"Failed to create cache directory: {cache_dir}")
-                        audio_file = cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
-                        logger.info(
-                            "[STREAM CACHE] Writing %d bytes -> %s",
-                            len(audio_data), audio_file,
-                        )
-                        audio_file.write_bytes(audio_data)
-                        if not audio_file.exists():
-                            raise RuntimeError(f"Audio file was not created: {audio_file}")
-                        logger.info(
-                            "[STREAM CACHE] Successfully saved %d bytes to %s",
-                            len(audio_data), audio_file,
-                        )
-                    except Exception as e:
-                        logger.error("[STREAM CACHE ERROR] Failed to save audio: %s", e)
-                else:
+            # Persist audio data when save_to_disk=True (and params present)
+            if save_to_disk and ebook_path and start_char is not None and end_char is not None:
+                try:
+                    cache_dir = self.get_cache_dir(ebook_path, model, voice)
                     logger.info(
-                        "[STREAM CACHE] SKIPPED (save_stream_audio=False or missing params): ebook=%s start=%d end=%d",
-                        ebook_path, start_char, end_char,
+                        "[STREAM CACHE] Saving audio for chars %d-%d -> dir=%s (exists=%s)",
+                        start_char, end_char, cache_dir, cache_dir.exists(),
                     )
+                    cache_dir.mkdir(parents=True, exist_ok=True)
+                    if not cache_dir.exists():
+                        logger.error(
+                            "[STREAM CACHE ERROR] mkdir failed to create dir: %s",
+                            cache_dir,
+                        )
+                        raise RuntimeError(f"Failed to create cache directory: {cache_dir}")
+                    audio_file = cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
+                    logger.info(
+                        "[STREAM CACHE] Writing %d bytes -> %s",
+                        len(audio_data), audio_file,
+                    )
+                    audio_file.write_bytes(audio_data)
+                    if not audio_file.exists():
+                        raise RuntimeError(f"Audio file was not created: {audio_file}")
+                    logger.info(
+                        "[STREAM CACHE] Successfully saved %d bytes to %s",
+                        len(audio_data), audio_file,
+                    )
+                except Exception as e:
+                    logger.error("[STREAM CACHE ERROR] Failed to save audio: %s", e)
+            elif not save_to_disk and (ebook_path or start_char is not None):
+                pass  # ephemeral mode — no cache lookup, no disk write
 
             return audio_data
 

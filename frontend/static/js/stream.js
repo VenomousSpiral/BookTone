@@ -22,6 +22,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     startAudioWatchdog();
     applyDisplaySettings();
     initSleepTimer();
+
+    // Load cache status on initial page load (elements exist in DOM)
+    refreshCacheStatus().catch(() => {});
 });
 
 window.addEventListener('beforeunload', () => {
@@ -265,7 +268,7 @@ async function saveSettingsToServer() {
                 show_title: state.settings.show_title,
                 show_progress_bar: state.settings.show_progress_bar,
                 show_images: state.showImages,
-                save_stream_audio: state.settings.save_stream_audio,
+                ...(state.settings.save_stream_audio !== undefined && { save_stream_audio: state.settings.save_stream_audio }),
                 sleep_timer_minutes: state.settings.sleep_timer_minutes,
                 show_sleep_timer: state.sleepTimer.showTimer
             })
@@ -624,6 +627,11 @@ function showBookmarks() {
 }
 
 function showSettings() {
+    showModal('settings');
+
+    // Refresh cache status in background so it's ready when user scrolls down
+    refreshCacheStatus().catch(() => {});
+
     const modelSelect = document.getElementById('modelSelect');
     const voiceSelect = document.getElementById('voiceSelect');
     const fontSizeSelect = document.getElementById('fontSizeSelect');
@@ -656,8 +664,6 @@ function showSettings() {
     if (showSleepTimerToggle) showSleepTimerToggle.checked = state.sleepTimer.showTimer;
     const saveStreamAudioToggle = document.getElementById('saveStreamAudioToggle');
     if (saveStreamAudioToggle) saveStreamAudioToggle.checked = !!state.settings.save_stream_audio;
-
-    showModal('settings');
 }
 
 function saveSettings(e) {

@@ -357,11 +357,13 @@ class StreamAudiobookService:
                         continue
 
                     try:
+                        # Audiobook generation always saves to disk regardless of streaming setting
                         audio_data = self.stream_service.generate_audio_for_text(
                             text, model, voice,
                             ebook_path=ebook_path,
                             start_char=start_char,
                             end_char=end_char,
+                            save_to_disk=True,
                         )
                         audio_file = (
                             cache_dir

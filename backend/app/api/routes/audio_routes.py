@@ -54,6 +54,9 @@ async def generate_audio(request: StreamAudioRequest):
             raise HTTPException(status_code=400, detail="Text segment is empty")
 
         gen_start = time.time()
+        # Respect user's save_stream_audio setting for streaming requests
+        stream_settings = stream_service.load_settings()
+        save_to_disk = bool(stream_settings.get("save_stream_audio", True))
         audio_data = stream_service.generate_audio_for_text(
             text,
             request.model,
@@ -61,6 +64,7 @@ async def generate_audio(request: StreamAudioRequest):
             ebook_path=request.ebook_path,
             start_char=request.start_char,
             end_char=request.end_char,
+            save_to_disk=save_to_disk,
         )
         gen_time = time.time() - gen_start
         total_time = time.time() - request_start
