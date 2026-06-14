@@ -443,12 +443,7 @@ async function handleCacheGenerate(ebookPath) {
         const res = await fetch(`${API_BASE}/stream/generate-cache`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                ebook_path: ebookPath,
-                model,
-                voice,
-                instructions: instructions || undefined
-            })
+            body: JSON.stringify({ ebook_path: ebookPath, model, voice })
         });
 
         if (!res.ok) throw new Error('Failed to start generation');

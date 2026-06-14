@@ -301,8 +301,10 @@ async function startAudiobookGeneration() {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/stream/generate-cache?ebook_path=${encodeURIComponent(EBOOK_PATH)}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}`, {
-            method: 'POST'
+        const res = await fetch(`${API_BASE}/stream/generate-cache`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ebook_path: EBOOK_PATH, model, voice })
         });
 
         if (!res.ok) throw new Error('Failed to start generation');
@@ -358,8 +360,10 @@ async function handleCacheDelete(ebookPath, model, voice) {
 async function handleCacheRegenerate(ebookPath, model, voice) {
     if (!confirm('Regenerate all chunks? This will overwrite existing cache.')) return;
     try {
-        const res = await fetch(`${API_BASE}/stream/generate-cache?ebook_path=${encodeURIComponent(ebookPath)}&model=${encodeURIComponent(model)}&voice=${encodeURIComponent(voice)}`, {
-            method: 'POST'
+        const res = await fetch(`${API_BASE}/stream/generate-cache`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ebook_path: ebookPath, model, voice })
         });
         if (!res.ok) throw new Error('Failed to regenerate');
         showToast('Regeneration started');
