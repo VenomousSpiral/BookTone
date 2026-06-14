@@ -635,6 +635,12 @@
                 </div>
                 <p style="font-size: 11px; color: var(--text-secondary, #888); margin: 0 0 12px 0; line-height: 1.4;">Cache generated audio chunks to disk. When you later generate a full audiobook with the same model/voice, cached chunks will be reused instead of re-generated.</p>
                 
+                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                    <label for="useCachedAudioToggle" style="margin: 0;">♻️ Use Cached Audio</label>
+                    <input type="checkbox" id="useCachedAudioToggle" onchange="toggleUseCachedAudio()" checked style="width: 20px; height: 20px; cursor: pointer;">
+                </div>
+                <p style="font-size: 11px; color: var(--text-secondary, #888); margin: 0 0 12px 0; line-height: 1.4;">When enabled, playback reuses cached audio chunks from disk cache. Disable to always generate fresh TTS on every play.</p>
+                
                 <!-- Audio Cache Status -->
                 <div id="cacheStatusContainer" style="background: rgba(255,255,255,0.05); border-radius: 8px; padding: 12px; margin-bottom: 15px;">
                     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">

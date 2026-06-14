@@ -54,9 +54,14 @@ async def generate_audio(request: StreamAudioRequest):
             raise HTTPException(status_code=400, detail="Text segment is empty")
 
         gen_start = time.time()
-        # Respect user's save_stream_audio setting for streaming requests
+        # Respect user's streaming settings for this request
         stream_settings = stream_service.load_settings()
         save_to_disk = bool(stream_settings.get("save_stream_audio", True))
+        use_cached = (
+            False  # per-request override to skip cache entirely
+            if isinstance(request.use_cached_audio, bool) and not request.use_cached_audio
+            else bool(stream_settings.get("use_cached_audio", True))  # setting default: enabled
+        )
         audio_data = stream_service.generate_audio_for_text(
             text,
             request.model,
@@ -65,6 +70,7 @@ async def generate_audio(request: StreamAudioRequest):
             start_char=request.start_char,
             end_char=request.end_char,
             save_to_disk=save_to_disk,
+            use_cached=use_cached,
         )
         gen_time = time.time() - gen_start
         total_time = time.time() - request_start
@@ -130,6 +136,8 @@ async def update_stream_settings(request: UpdateStreamSettingsRequest):
             current_settings["show_images"] = request.show_images
         if request.save_stream_audio is not None:
             current_settings["save_stream_audio"] = request.save_stream_audio
+        if request.use_cached_audio is not None:
+            current_settings["use_cached_audio"] = request.use_cached_audio
         if request.sleep_timer_minutes is not None:
             current_settings["sleep_timer_minutes"] = request.sleep_timer_minutes
         if request.show_sleep_timer is not None:

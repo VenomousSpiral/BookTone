@@ -315,7 +315,8 @@ async function generateAudio(startChar, endChar, useCache = true) {
                 start_char: startChar,
                 end_char: endChar,
                 model: state.settings.preferred_model || 'tts-1',
-                voice: state.settings.preferred_voice || 'alloy'
+                voice: state.settings.preferred_voice || 'alloy',
+                use_cached_audio: state.useCachedAudio
             })
         });
 

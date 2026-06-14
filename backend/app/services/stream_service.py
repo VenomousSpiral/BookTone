@@ -432,28 +432,39 @@ class StreamService:
         start_char: int = None,
         end_char: int = None,
         save_to_disk: bool = True,
+        use_cached: bool = True,
     ) -> bytes:
         """
         Generate audio for a specific text segment.
         Returns audio data as bytes.
 
         Args:
-            save_to_disk: If False, skip cache lookup and disk write entirely
+            save_to_disk: If False, skip all disk operations entirely
                 (ephemeral/streaming-only mode). Defaults to True.
+            use_cached: If False, always generate fresh TTS even if cached
+                version exists. When used together with save_to_disk=True,
+                freshly generated audio is still saved to disk for future use.
+                Defaults to True.
         """
         logger.debug(
             "[DEBUG] Generating audio - model: %s, voice: %s, text length: %d",
             model, voice, len(text),
         )
 
-        # Check stream cache (only when saving is enabled)
-        if save_to_disk and ebook_path and start_char is not None and end_char is not None:
+        # use_cached controls ONLY the cache read (lookup).
+        # save_stream_audio independently controls whether generated chunks are written.
+        if not use_cached:
+            logger.debug(
+                "[STREAM CACHE] Skipped — always generating fresh TTS for chars %d-%d",
+                start_char, end_char,
+            )
+        elif ebook_path and start_char is not None and end_char is not None:
             cached = self.get_cached_stream_audio_by_chars(
                 ebook_path, start_char, end_char, model, voice
             )
             if cached:
                 logger.debug(
-                    "[DEBUG] Returning cached stream audio for chars %d-%d",
+                    "[STREAM CACHE] Hit: returning cached audio for chars %d-%d",
                     start_char, end_char,
                 )
                 return cached
@@ -485,7 +496,9 @@ class StreamService:
             audio_data = response.read()
             logger.debug("[DEBUG] Generated audio: %d bytes", len(audio_data))
 
-            # Persist audio data when save_to_disk=True (and params present)
+            # Persist audio whenever save_to_disk=True, regardless of use_cached.
+            # use_cached only controls whether we READ from disk; save_stream_audio
+            # independently controls whether freshly generated chunks are WRITTEN to disk.
             if save_to_disk and ebook_path and start_char is not None and end_char is not None:
                 try:
                     cache_dir = self.get_cache_dir(ebook_path, model, voice)

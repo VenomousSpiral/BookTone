@@ -15,6 +15,7 @@ class StreamAudioRequest(BaseModel):
     end_char: int
     model: str
     voice: str
+    use_cached_audio: Optional[bool] = None
 
 
 class UpdateStreamSettingsRequest(BaseModel):
@@ -28,7 +29,8 @@ class UpdateStreamSettingsRequest(BaseModel):
     show_title: Optional[bool] = None
     show_progress_bar: Optional[bool] = None
     show_images: Optional[bool] = None
-    save_stream_audio: Optional[bool] = None
+    save_stream_audio: Optional[bool] = None  # whether to SAVE audio chunks to disk cache
+    use_cached_audio: Optional[bool] = None   # whether to READ/USE cached audio from disk
     sleep_timer_minutes: Optional[int] = None
     show_sleep_timer: Optional[bool] = None
 

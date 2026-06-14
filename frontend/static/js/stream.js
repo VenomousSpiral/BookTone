@@ -189,8 +189,8 @@ async function loadSettings() {
             const toggle = document.getElementById('saveStreamAudioToggle');
             if (toggle) toggle.checked = !!state.settings.save_stream_audio;
         }
-
-        applyVisibilitySettings();
+        // Restore use_cached_audio from server settings
+        state.useCachedAudio = state.settings.use_cached_audio ?? true;
     } catch (error) {
         logError('Settings load error', error);
         state.settings = {
@@ -198,6 +198,7 @@ async function loadSettings() {
             progress_mode: 'book', time_mode: 'total', show_title: true,
             show_progress_bar: true, show_images: false, sleep_timer_minutes: 0, show_sleep_timer: false
         };
+        state.useCachedAudio = true; // default
         state.showImages = false;
     }
 }
@@ -269,6 +270,7 @@ async function saveSettingsToServer() {
                 show_progress_bar: state.settings.show_progress_bar,
                 show_images: state.showImages,
                 ...(state.settings.save_stream_audio !== undefined && { save_stream_audio: state.settings.save_stream_audio }),
+                use_cached_audio: state.useCachedAudio,
                 sleep_timer_minutes: state.settings.sleep_timer_minutes,
                 show_sleep_timer: state.sleepTimer.showTimer
             })
@@ -664,6 +666,9 @@ function showSettings() {
     if (showSleepTimerToggle) showSleepTimerToggle.checked = state.sleepTimer.showTimer;
     const saveStreamAudioToggle = document.getElementById('saveStreamAudioToggle');
     if (saveStreamAudioToggle) saveStreamAudioToggle.checked = !!state.settings.save_stream_audio;
+    // Populate use_cached_audio toggle
+    const useCachedAudioToggle = document.getElementById('useCachedAudioToggle');
+    if (useCachedAudioToggle) useCachedAudioToggle.checked = state.useCachedAudio !== false;
 }
 
 function saveSettings(e) {
@@ -689,6 +694,9 @@ function saveSettings(e) {
     state.settings.show_images = showImagesToggle?.checked;
     const saveStreamAudioToggle2 = document.getElementById('saveStreamAudioToggle');
     state.settings.save_stream_audio = !!saveStreamAudioToggle2?.checked;
+    // Read use_cached_audio from toggle into state for saving to server
+    const useCachedAudioToggle2 = document.getElementById('useCachedAudioToggle');
+    state.useCachedAudio = useCachedAudioToggle2?.checked !== false;
 
     state.progressMode = progressModeSelect?.value || 'book';
     state.timeMode = timeModeSelect?.value || 'total';
@@ -737,6 +745,19 @@ function toggleSaveStreamAudio() {
         showToast('Cache audio saving enabled — future chunks will be saved to disk', 3000);
     } else {
         showToast('Cache audio saving disabled', 2500);
+    }
+    saveSettingsToServer();
+}
+
+function toggleUseCachedAudio() {
+    const toggle = document.getElementById('useCachedAudioToggle');
+    state.useCachedAudio = !!toggle?.checked;
+    if (state.useCachedAudio) {
+        showToast('Using cached audio — chunks will be served from disk when available', 3000);
+    } else {
+        // Clear in-memory cache so previously fetched blobs aren't reused
+        state.audioCache.clear();
+        showToast('Fresh TTS only — no cache lookups, always generating new audio', 3000);
     }
     saveSettingsToServer();
 }
