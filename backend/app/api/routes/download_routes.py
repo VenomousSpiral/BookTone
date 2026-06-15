@@ -208,9 +208,11 @@ def _combine_stream_cache(
             mode="w", suffix=".txt", delete=False, encoding="utf-8"
         )
         audio_path = Path(cache_dir)
+        # Broader pattern catches both legacy position-based and new hash-named files
+        # Sort by chunk-index from parsed ebook data (hash filenames have no embedded positions)
         for af in sorted(
-            audio_path.glob(f"audio_*.{audio_format}"),
-            key=lambda p: int(p.stem.split("_")[1]),
+            audio_path.glob(f"*.{audio_format}"),
+            key=lambda p: int(p.stem.split("_")[1]) if "_" in Path(p).stem else 0,
         ):
             escaped = str(af).replace("'", "'\\''")
             concat_file.write(f"file '{escaped}'\n")
@@ -319,9 +321,10 @@ async def prepare_download(
                 "file_size_mb": round(file_size / (1024 * 1024), 1),
             }
 
+        # Broader pattern catches both legacy and new hash-named files
         audio_files = sorted(
-            cache_dir.glob(f"audio_*.{audio_format}"),
-            key=lambda p: int(p.stem.split("_")[1]),
+            cache_dir.glob(f"*.{audio_format}"),
+            key=lambda p: int(p.stem.split("_")[1]) if "_" in Path(p).stem else 0,
         )
 
         if not audio_files:

@@ -293,23 +293,48 @@ def probe_chapters(filepath):
     return found
 
 
-def _audio_file_sort_key(p):
-    """Sort key for audio files like ``audio_879_Y.opus``.
+# ─── CAS helpers: hash-to-index mapping for audio file sorting ──────────
 
-    Extracts the numeric X,Y from filenames so that e.g. 1060 < 935 (numeric, not alphabetical).
-    Returns ``(X, Y)`` where Y defaults to infinity if it cannot be parsed as an integer.
-    """
-    stem = Path(p).stem          # e.g. 'audio_879_Y' or 'audio_0_124'
-    parts = stem.split("_")
+
+def _load_chunk_hash_to_index(ebook_path: str,
+                              cache_base_dir: Path) -> dict[str, int]:
+    """Build {content_hash: index} map from parsed ebook data."""
+    stream_cache_json = _find_stream_cache_match(
+        Path(ebook_path).stem, cache_base_dir)
+
+    if not (stream_cache_json and stream_cache_json.exists()):
+        return {}
+
     try:
-        x = int(parts[1])
-    except (ValueError, IndexError):
-        x = 0
-    if len(parts) >= 3 and parts[2].isdigit():
-        y = int(parts[2])
-    else:
-        y = float("inf")         # files without a trailing number sort last
-    return (x, y)
+        with open(stream_cache_json) as f:
+            data = json.load(f)
+
+        chunk_map: dict[str, int] = {}
+        for c in data.get("chunks", []):
+            h = c.get("_content_hash")
+            if h:
+                chunk_map[h] = int(c["index"])
+        return chunk_map
+    except Exception as e:
+        logger.warning(
+            "[DOWNLOAD] Failed to load chunk hash map: %s", e,
+        )
+        return {}
+
+
+def _sort_audio_files_by_index(audio_files: list[Path],
+                               hash_to_idx_map: dict[str, int]) -> list[Path]:
+    """Sort audio files by their content-hash-to-chunk-index mapping.
+
+    Files whose hashes are in the map get sorted numerically.
+    Orphaned files (not in any parsed version) sort last with index=999999.
+    """
+    def sort_key(p: Path):
+        stem = p.stem
+        idx = hash_to_idx_map.get(stem, 999999)
+        return (0 if stem in hash_to_idx_map else 1, idx)
+
+    return sorted(audio_files, key=sort_key)
 
 
 # ─── Core conversion logic ──────────────────────────────────────────────
@@ -887,10 +912,14 @@ def _run_download_job(
         if base_cache:
             model_path = base_cache / model_name
             voice_path = model_path / voice
+            # Broader pattern catches both legacy position-based and new hash-named files
             for ext in ("opus", "m4a"):
-                found_files.extend(voice_path.glob(f"audio_*.{ext}"))
+                found_files.extend(voice_path.glob(f"*.{ext}"))
 
-        audio_sorted = sorted(found_files, key=lambda p: _audio_file_sort_key(p))
+        # CAS: sort audio files by chunk-index from parsed ebook metadata,
+        # not by filename pattern (hashes have no embedded positions)
+        hash_to_idx_map = _load_chunk_hash_to_index(ebook_path, cache_base_dir)
+        audio_sorted = _sort_audio_files_by_index(found_files, hash_to_idx_map)
 
         if not audio_sorted:
             update_job(0, None)  # clears progress

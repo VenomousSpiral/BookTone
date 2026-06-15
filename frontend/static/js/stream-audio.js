@@ -172,7 +172,8 @@ async function stopPlaying() {
 async function playCurrentChunk() {
     const audio = DOM.audio;
     const chunk = state.book.chunks[state.currentChunk];
-    const cacheKey = `${chunk.start_idx}-${chunk.end_idx}`;
+    // CAS: use content hash as stable key (falls back to index if no hash)
+    const cacheKey = chunk._content_hash || `idx-${state.currentChunk}`;
 
     let audioBlob;
     if (state.audioCache.has(cacheKey)) {
@@ -223,7 +224,8 @@ async function playNextSegment(shouldPlay = false) {
     try {
         state.isGeneratingAudio = true;
         const chunk = state.book.chunks[state.currentChunk];
-        const cacheKey = `${chunk.start_idx}-${chunk.end_idx}`;
+        // CAS: use content hash as stable key (falls back to index if no hash)
+        const cacheKey = chunk._content_hash || `idx-${state.currentChunk}`;
 
         const audio = DOM.audio;
         if (state.currentAudioSegment && state.currentAudioSegment.chunkIndex !== state.currentChunk) {
@@ -293,7 +295,14 @@ async function playNextSegment(shouldPlay = false) {
 }
 
 async function generateAudio(startChar, endChar, useCache = true) {
-    const cacheKey = `${startChar}-${endChar}`;
+    // CAS: find the chunk to get its content hash for stable caching
+    let cacheKey;
+    if (state.book?.chunks && state.currentChunk !== undefined) {
+        const chunk = state.book.chunks[state.currentChunk];
+        cacheKey = chunk?._content_hash || `idx-${state.currentChunk}`;
+    } else {
+        cacheKey = `${startChar}-${endChar}`; // fallback
+    }
     if (useCache && state.audioCache.has(cacheKey)) {
         logCache('Hit:', cacheKey);
         return state.audioCache.get(cacheKey);
@@ -344,12 +353,18 @@ function cleanupAudioCache(centerChunkIndex) {
     const minKeep = Math.max(0, centerChunkIndex - 5);
     const maxKeep = Math.min(state.book.total_chunks - 1, centerChunkIndex + 10);
 
+    // CAS: use content hash for eviction decisions when available
     const chunkMap = new Map();
-    state.book.chunks.forEach((chunk, idx) => chunkMap.set(chunk.start_idx, idx));
+    state.book.chunks.forEach((chunk, idx) => {
+        if (chunk._content_hash) {
+            chunkMap.set(chunk._content_hash, idx);
+        } else {
+            chunkMap.set(`idx-${idx}`, idx);
+        }
+    });
 
     for (const [key] of state.audioCache) {
-        const startChar = parseInt(key.split('-')[0]);
-        const chunkIndex = chunkMap.get(startChar);
+        const chunkIndex = chunkMap.get(key);
         if (chunkIndex !== undefined && (chunkIndex < minKeep || chunkIndex > maxKeep)) {
             state.audioCache.delete(key);
             logCache(`Evicted chunk ${chunkIndex} (keeping ${minKeep}-${maxKeep})`);
@@ -365,7 +380,8 @@ function prefetchAudio(startChunkIndex, count = CACHE.SIZE) {
         if (chunkIndex >= state.book.total_chunks) break;
 
         const chunk = state.book.chunks[chunkIndex];
-        const cacheKey = `${chunk.start_idx}-${chunk.end_idx}`;
+        // CAS: use content hash as stable key (falls back to index if no hash)
+        const cacheKey = chunk._content_hash || `idx-${chunkIndex}`;
 
         if (state.audioCache.has(cacheKey) || state.prefetchInFlight.has(cacheKey)) continue;
         if (state.prefetchInFlight.size >= CACHE.CONCURRENCY) break;
@@ -381,7 +397,8 @@ function prefetchAudio(startChunkIndex, count = CACHE.SIZE) {
         if (chunkIndex < 0 || state.prefetchInFlight.size >= CACHE.CONCURRENCY) break;
 
         const chunk = state.book.chunks[chunkIndex];
-        const cacheKey = `${chunk.start_idx}-${chunk.end_idx}`;
+        // CAS: use content hash as stable key (falls back to index if no hash)
+        const cacheKey = chunk._content_hash || `idx-${chunkIndex}`;
 
         if (!state.audioCache.has(cacheKey) && !state.prefetchInFlight.has(cacheKey)) {
             state.prefetchInFlight.add(cacheKey);

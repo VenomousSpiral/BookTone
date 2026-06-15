@@ -614,6 +614,7 @@ class EbookParser:
                     "index": chunk_index,
                     "start_idx": chunk_start_char,
                     "end_idx": chunk_end_char,
+                    "_content_hash": hashlib.md5(text_chunk.encode()).hexdigest()[:16],
                     "text": text_chunk,
                     "length": len(text_chunk),
                     "chapter_index": chapter_idx
@@ -729,6 +730,7 @@ class EbookParser:
                     "index": chunk_index,
                     "start_idx": chunk_start_char,
                     "end_idx": chunk_end_char,
+                    "_content_hash": hashlib.md5(clean_text_chunk.encode()).hexdigest()[:16],
                     "text": clean_text_chunk,
                     "display_text": display_text,
                     "length": len(clean_text_chunk),

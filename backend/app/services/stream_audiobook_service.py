@@ -146,8 +146,9 @@ class StreamAudiobookService:
                     model_name = model_dir.name
                     voice_name = voice_dir.name
 
+                    # Broader pattern catches both legacy position-based and new hash-named files
                     audio_files = list(
-                        voice_dir.glob(f"audio_*.{settings.AUDIO_FORMAT}")
+                        voice_dir.glob(f"*.{settings.AUDIO_FORMAT}")
                     )
                     combined_file = voice_dir / f"combined.{settings.AUDIO_FORMAT}"
                     completed = len(audio_files)
@@ -180,20 +181,18 @@ class StreamAudiobookService:
                     else:
                         status = "not_started"
 
-                    # Find missing chunks
+                    # CAS: use content hash as stable identifier across versions
                     missing_chunks = []
                     if total_chunks > 0:
-                        existing_starts = set()
+                        existing_hashed = set()
                         for af in audio_files:
-                            try:
-                                parts = af.stem.split("_")
-                                if len(parts) >= 3:
-                                    existing_starts.add(int(parts[-2]))
-                            except (ValueError, IndexError):
-                                continue
+                            stem = af.stem
+                            if len(stem) == 16 and all(c in '0123456789abcdef' for c in stem):
+                                existing_hashed.add(stem)
                         for i in range(total_chunks):
                             chunk = ebook_data["chunks"][i]
-                            if chunk["start_idx"] not in existing_starts:
+                            content_hash = chunk.get("_content_hash")
+                            if not content_hash or content_hash not in existing_hashed:
                                 missing_chunks.append(i)
 
                     model_voice_caches.append({
@@ -321,15 +320,14 @@ class StreamAudiobookService:
                 )
                 cache_dir.mkdir(parents=True, exist_ok=True)
 
-                existing_cached = set()
+                # CAS: build set of content hashes already cached on disk
+                existing_hashed = set()
                 if cache_dir.exists():
-                    for af in cache_dir.glob(f"audio_*.{settings.AUDIO_FORMAT}"):
-                        try:
-                            parts = af.stem.split("_")
-                            if len(parts) >= 3:
-                                existing_cached.add(int(parts[-2]))
-                        except (ValueError, IndexError):
-                            continue
+                    for af in cache_dir.glob(f"*.{settings.AUDIO_FORMAT}"):
+                        stem = af.stem
+                        # Valid MD5-prefix filename is 16 hex chars (no directory separators)
+                        if len(stem) == 16 and all(c in '0123456789abcdef' for c in stem):
+                            existing_hashed.add(stem)
 
                 completed = 0
                 for i in range(total_chunks):
@@ -348,7 +346,9 @@ class StreamAudiobookService:
                     start_char = chunk["start_idx"]
                     end_char = chunk["end_idx"]
 
-                    if start_char in existing_cached:
+                    # CAS: use content hash as stable identifier across ebook versions
+                    content_hash = chunk.get("_content_hash")
+                    if content_hash and content_hash in existing_hashed:
                         completed += 1
                         continue
 
@@ -365,9 +365,11 @@ class StreamAudiobookService:
                             end_char=end_char,
                             save_to_disk=True,
                         )
+                        # CAS: write with content-hash filename (stable across versions)
                         audio_file = (
-                            cache_dir
-                            / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
+                            cache_dir / f"{content_hash}.{settings.AUDIO_FORMAT}"
+                        ) if content_hash else (
+                            cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
                         )
                         with open(audio_file, "wb") as f:
                             f.write(audio_data)

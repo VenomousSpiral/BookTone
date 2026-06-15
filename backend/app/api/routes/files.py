@@ -214,8 +214,10 @@ async def upload_file_copy_cache(
     copy_paths: List[str] = Query(default=[""], description="Paths of files to copy caches from"),
 ):
     """
-    Upload a file, copy caches from listed files into new dirs,
-    delete old files, save new file.
+Upload a file, copy caches from listed files to the new upload's
+directories. Does NOT delete any existing ebook or cache — that is
+the job of 'replace'. The original ebooks and their cached audio are
+preserved intact.
     """
     try:
         # Compute hashes of duplicates BEFORE saving (they may be overwritten)
@@ -260,14 +262,11 @@ async def upload_file_copy_cache(
                 all_caches_copied["errors"] = all_caches_copied.get("errors", []) + cache_result["errors"]
             
             copied_from.append(dup_path)
-            
-            # Delete old file (skip if same path as new file - already overwritten)
-            if Path(dup_path).resolve() != Path(file_path).resolve():
-                file_manager.delete_file(dup_path)
-                logger.info(f"[MERGE] Copied caches and deleted: {dup_path}")
-            else:
-                logger.info(f"[MERGE] Copied caches, file already overwritten: {dup_path}")
-        
+
+            # NOTE: Copy does NOT delete old files — only replace should.
+            # The new upload gets its own fresh audiobook cache (empty),
+            # while the original keeps both its ebook and cached audio intact.
+
         # Background pre-parse
         def _pre_parse():
             _logger = logging.getLogger("ebook_parser")
@@ -292,8 +291,7 @@ async def upload_file_copy_cache(
             "path": str(file_path),
             "copied_from": copied_from,
             "caches_copied": all_caches_copied,
-            "old_file_deleted": len(copied_from) > 0,
-            "old_cache_preserved": True
+            "files_unaffected": True
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

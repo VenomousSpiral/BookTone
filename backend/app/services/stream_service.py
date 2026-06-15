@@ -62,18 +62,18 @@ class StreamService:
         return self.cache_service.clear_stream_cache(ebook_path, model, voice)
 
     def get_cached_stream_audio_by_chars(
-        self, ebook_path: str, start_char: int, end_char: int, model: str, voice: str
+        self, ebook_path: str, start_char: int, end_char: int,
+        model: str, voice: str, text: str = "",
     ) -> Optional[bytes]:
         return self.cache_service.get_cached_stream_audio_by_chars(
-            ebook_path, start_char, end_char, model, voice
+            ebook_path, start_char, end_char, model, voice, text=text
         )
 
     def find_stream_cache_covering_range(
         self, cache_model_dir: Path, start_char: int, end_char: int
     ) -> Optional[Path]:
-        return self.cache_service.find_stream_cache_covering_range(
-            cache_model_dir, start_char, end_char
-        )
+        # No longer needed with CAS — each chunk has its own exact hash match.
+        return None
 
     @staticmethod
     def _get_db_conn():
@@ -459,8 +459,9 @@ class StreamService:
                 start_char, end_char,
             )
         elif ebook_path and start_char is not None and end_char is not None:
+            # CAS lookup with text content (stable across versions)
             cached = self.get_cached_stream_audio_by_chars(
-                ebook_path, start_char, end_char, model, voice
+                ebook_path, start_char, end_char, model, voice, text=text
             )
             if cached:
                 logger.debug(
@@ -501,10 +502,12 @@ class StreamService:
             # independently controls whether freshly generated chunks are WRITTEN to disk.
             if save_to_disk and ebook_path and start_char is not None and end_char is not None:
                 try:
+                    # CAS save path — content-hash filename (stable across versions)
+                    content_hash = hashlib.md5(text.encode()).hexdigest()[:16]
                     cache_dir = self.get_cache_dir(ebook_path, model, voice)
                     logger.info(
-                        "[STREAM CACHE] Saving audio for chars %d-%d -> dir=%s (exists=%s)",
-                        start_char, end_char, cache_dir, cache_dir.exists(),
+                        "[STREAM CACHE] Saving audio for chars %d-%d -> dir=%s hash=%s (exists=%s)",
+                        start_char, end_char, cache_dir, content_hash, cache_dir.exists(),
                     )
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     if not cache_dir.exists():
@@ -513,7 +516,7 @@ class StreamService:
                             cache_dir,
                         )
                         raise RuntimeError(f"Failed to create cache directory: {cache_dir}")
-                    audio_file = cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
+                    audio_file = cache_dir / f"{content_hash}.{settings.AUDIO_FORMAT}"
                     logger.info(
                         "[STREAM CACHE] Writing %d bytes -> %s",
                         len(audio_data), audio_file,

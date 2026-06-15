@@ -39,6 +39,7 @@ async def parse_ebook(
                     "index": chunk["index"],
                     "start_idx": chunk["start_idx"],
                     "end_idx": chunk["end_idx"],
+                    "_content_hash": chunk.get("_content_hash", ""),
                     "length": chunk["length"],
                     "images": chunk.get("image_data", []),
                 }
@@ -60,6 +61,7 @@ async def parse_ebook(
                     "index": chunk["index"],
                     "start_idx": chunk["start_idx"],
                     "end_idx": chunk["end_idx"],
+                    "_content_hash": chunk.get("_content_hash", ""),
                     "length": chunk["length"],
                 }
                 for chunk in result["chunks"]
@@ -106,6 +108,7 @@ async def get_text_segment(
                 "text": chunk["text"],
                 "start_char": chunk["start_idx"],
                 "end_char": chunk["end_idx"],
+                "_content_hash": chunk.get("_content_hash", ""),
                 "chunk_index": chunk_index,
             }
 
@@ -146,6 +149,7 @@ async def get_text_batch(request: TextBatchRequest):
                 "text": chunk["text"],
                 "start_char": chunk["start_idx"],
                 "end_char": chunk["end_idx"],
+                "_content_hash": chunk.get("_content_hash", ""),
                 "chunk_index": idx,
             }
             if request.with_images:

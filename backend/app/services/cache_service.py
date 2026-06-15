@@ -92,7 +92,8 @@ class CacheService:
                         "size_mb": 0,
                     }
 
-                    for audio_file in voice_dir.glob(f"audio_*.{self.audio_format}"):
+                    # Broader pattern catches both legacy position-based and new hash-named files
+                    for audio_file in voice_dir.glob(f"*.{self.audio_format}"):
                         cache_info["files"] += 1
                         cache_info["size_bytes"] += audio_file.stat().st_size
 
@@ -152,7 +153,8 @@ class CacheService:
 
             def _delete_mv_dir(mv_dir: Path) -> None:
                 nonlocal deleted_files, deleted_size
-                for audio_file in mv_dir.glob(f"audio_*.{self.audio_format}"):
+                # Broader pattern catches both legacy and new hash-named files
+                for audio_file in mv_dir.glob(f"*.{self.audio_format}"):
                     deleted_size += audio_file.stat().st_size
                     audio_file.unlink()
                     deleted_files += 1
@@ -194,10 +196,30 @@ class CacheService:
     # ---- Cache lookup ----
 
     def get_cached_stream_audio_by_chars(
-        self, ebook_path: str, start_char: int, end_char: int, model: str, voice: str
+        self, ebook_path: str, start_char: int, end_char: int,
+        model: str, voice: str, text: str = "",
     ) -> Optional[bytes]:
-        """Check if audio for a specific char range was cached."""
+        """Check if audio for a specific char range was cached.
+
+        Uses content-hash based lookup (CAS) — computes the hash from *text*
+        to find the correct file regardless of position shifts between parses.
+        Falls back to legacy position-based filename when text is not provided.
+        """
         cache_dir = self.get_cache_dir(ebook_path, model, voice)
+
+        # CAS lookup: compute hash from actual text content (stable across versions).
+        if text:
+            import hashlib as _hashlib
+            content_hash = _hashlib.md5(text.encode()).hexdigest()[:16]
+            audio_file = cache_dir / f"{content_hash}.{self.audio_format}"
+            if audio_file.exists():
+                logger.debug(
+                    "[STREAM CACHE] CAS hit: found cached audio for hash %s",
+                    content_hash,
+                )
+                return audio_file.read_bytes()
+
+        # Legacy fallback (position-based filename).
         audio_file = cache_dir / f"audio_{start_char}_{end_char}.{self.audio_format}"
         if audio_file.exists():
             logger.debug(
@@ -207,24 +229,4 @@ class CacheService:
             return audio_file.read_bytes()
         return None
 
-    def find_stream_cache_covering_range(
-        self, cache_model_dir: Path, start_char: int, end_char: int
-    ) -> Optional[Path]:
-        """
-        Find a cached stream audio file that exactly covers the given text range.
-        Returns the path to the cache file if found, None otherwise.
-        """
-        if not cache_model_dir or not cache_model_dir.exists():
-            return None
 
-        for audio_file in cache_model_dir.glob(f"audio_*.{self.audio_format}"):
-            try:
-                parts = audio_file.stem.split("_")
-                if len(parts) == 3 and parts[0] == "audio":
-                    cached_start = int(parts[1])
-                    cached_end = int(parts[2])
-                    if cached_start <= start_char and cached_end >= end_char:
-                        return audio_file
-            except (ValueError, IndexError):
-                continue
-        return None
