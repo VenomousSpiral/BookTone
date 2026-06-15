@@ -294,12 +294,13 @@ async function playNextSegment(shouldPlay = false) {
     }
 }
 
-async function generateAudio(startChar, endChar, useCache = true) {
+async function generateAudio(startChar, endChar, useCache = true, forChunkIndex = null) {
     // CAS: find the chunk to get its content hash for stable caching
     let cacheKey;
-    if (state.book?.chunks && state.currentChunk !== undefined) {
-        const chunk = state.book.chunks[state.currentChunk];
-        cacheKey = chunk?._content_hash || `idx-${state.currentChunk}`;
+    const chunkIndex = forChunkIndex !== null ? forChunkIndex : state.currentChunk;
+    if (state.book?.chunks && chunkIndex !== undefined) {
+        const chunk = state.book.chunks[chunkIndex];
+        cacheKey = chunk?._content_hash || `idx-${chunkIndex}`;
     } else {
         cacheKey = `${startChar}-${endChar}`; // fallback
     }
@@ -387,7 +388,7 @@ function prefetchAudio(startChunkIndex, count = CACHE.SIZE) {
         if (state.prefetchInFlight.size >= CACHE.CONCURRENCY) break;
 
         state.prefetchInFlight.add(cacheKey);
-        generateAudio(chunk.start_idx, chunk.end_idx, false)
+        generateAudio(chunk.start_idx, chunk.end_idx, false, chunkIndex)
             .then(() => state.prefetchInFlight.delete(cacheKey))
             .catch(() => state.prefetchInFlight.delete(cacheKey));
     }
@@ -402,7 +403,7 @@ function prefetchAudio(startChunkIndex, count = CACHE.SIZE) {
 
         if (!state.audioCache.has(cacheKey) && !state.prefetchInFlight.has(cacheKey)) {
             state.prefetchInFlight.add(cacheKey);
-            generateAudio(chunk.start_idx, chunk.end_idx, false)
+            generateAudio(chunk.start_idx, chunk.end_idx, false, chunkIndex)
                 .then(() => state.prefetchInFlight.delete(cacheKey))
                 .catch(() => state.prefetchInFlight.delete(cacheKey));
         }
