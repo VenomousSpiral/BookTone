@@ -284,7 +284,7 @@ function loadAndRenderAudiobookStatus(ebookPath) {
                 } else if (cache.status === 'completed') {
                     progressHtml = `<div style="margin-top: 6px;"><span style="font-size: 11px; color: #66bb6a;">\u2705 All ${cache.completed_chunks} chunks complete \u00B7 ${cache.size_mb} MB</span></div>`;
                 } else if (cache.status === 'not_started') {
-                    progressHtml = `<div style="margin-top: 6px;"><span style="font-size: 11px; color: var(--text-secondary);">\u23F8\uFE0F Not started yet</span></div>`;
+                    progressHtml = `<span style="font-size: 11px; color: var(--text-secondary);">\u23F8\uFE0F Not started yet</span>`;
                 }
 
                 let actionButtons = '';
@@ -297,8 +297,17 @@ function loadAndRenderAudiobookStatus(ebookPath) {
                     actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCachePause('${ebookPath}', '${cache.model}', '${cache.voice}')">\u23F8\uFE0F Pause</button>`;
                 } else if (cache.status === 'paused' || cache.status === 'failed') {
                     actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheResume('${ebookPath}', '${cache.model}', '${cache.voice}')">\u25B6\uFE0F Resume Generation</button>`;
+                } else if (cache.status === 'not_started') {
+                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheResume('${ebookPath}', '${cache.model}', '${cache.voice}')">\u25B6\uFE0F Resume Generation</button>`;
                 }
+
+                if (cache.error) {
+                    actionButtons += `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(244, 67, 54, 0.1); border-radius: 4px; font-size: 11px; color: #f44;">⚠️ ${cache.error}</div>`;
+                }
+
                 actionButtons += `<button class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheDelete('${ebookPath}', '${cache.model}', '${cache.voice}')">\uD83D\uDDD1\uFE0F Delete Cache</button>`;
+
+
 
                 html += `
                     <div style="margin-bottom: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid ${cache.status === 'completed' ? '#66bb6a' : cache.status === 'in_progress' ? '#4fc3f7' : '#f44'};">
