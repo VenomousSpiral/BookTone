@@ -9,7 +9,7 @@ from app.main import app
 from fastapi.testclient import TestClient
 
 # Clean stale jobs before running tests
-jobs_dir = '/home/eli/PythonProjects/Web-Audio-Book-Reader/storage/download_jobs/'  
+jobs_dir = '/home/eli/PythonProjects/Web-Audio-Book-Reader/backend/app/storage/download_jobs/'
 if os.path.exists(jobs_dir):
     for f in os.listdir(jobs_dir):
         p = os.path.join(jobs_dir, f)
@@ -17,9 +17,10 @@ if os.path.exists(jobs_dir):
             os.unlink(p)
 
 client = TestClient(app)
-EBOOK = 'Master_and_Servant.epub'
-MODEL = 'OmniVoice'  
-VOICE = 'Jabberwocky-UK'
+# Use Pride_if_New_Game_Plus (1).epub — the only epub available on disk
+EBOOK = 'new/Pride_if_New_Game_Plus (1).epub'
+MODEL = 'OminiVoice'  
+VOICE = 'Narrator-UK'
 
 
 def poll_until_complete(job_id, timeout=180):
@@ -138,7 +139,7 @@ def test_api_routes():
         
         out_file_expected = _os.path.join(  
             '/home/eli/PythonProjects/Web-Audio-Book-Reader/storage/audiobooks',
-            '_stream_cache_Master_and_Servant_e34d9f629f93', MODEL, VOICE, f'combined.{fmt}'
+            '_stream_cache_Pride_if_New_Game_Plus__1__f0768531c5d2', MODEL, VOICE, f'combined.{fmt}'
         )
         
         file_ok = _os.path.exists(out_file_expected) and (_os.path.getsize(out_file_expected or '/dev/null') > 100 if out_file_expected else False)
@@ -171,15 +172,20 @@ def test_api_routes():
         data = resp.json()  
         print(f'  GET /download-status: status=200, result={data.get("status", "?")}')
 
-    # Test download-source (should fail — no ebook file on disk)  
+    # Test download-source (ebook exists, so should return file)
     resp = client.get(
         f'/api/stream/download-source?ebook_path={EBOOK}'
     )
     
-    if resp.status_code == 404:
-        print(f'  GET /download-source: status=404 (expected — source file not found)')
+    if resp.status_code == 200:
+        print(f'  GET /download-source: status=200 (✅ ebook returned as file, {len(resp.content)} bytes)')
+    elif resp.status_code == 404:
+        print(f'  GET /download-source: status=404 (source file not found)')
     else:  
-        detail = str(resp.json().get('detail', ''))[:150] if isinstance(resp.json(), dict) else resp.text[:200]
+        try:
+            detail = str(resp.json().get('detail', ''))[:150]
+        except Exception:
+            detail = resp.text[:200] if isinstance(resp.text, str) else 'binary response'
         print(f'  GET /download-source: status={resp.status_code} — {detail}')
 
     # Test invalid job ID and bad format  
@@ -209,7 +215,7 @@ def test_api_routes():
     for fmt in fmts_to_check:
         out_file_expected = _os.path.join(
             '/home/eli/PythonProjects/Web-Audio-Book-Reader/storage/audiobooks',  
-            '_stream_cache_Master_and_Servant_e34d9f629f93', MODEL, VOICE, f'combined.{fmt}'  
+            '_stream_cache_Pride_if_New_Game_Plus__1__f0768531c5d2', MODEL, VOICE, f'combined.{fmt}'  
         )
         
         if _os.path.exists(out_file_expected) and _os.path.getsize(out_file_expected) > 100:
@@ -219,7 +225,7 @@ def test_api_routes():
             print(f'  ❌ {fmt.upper():>5}: MISSING (job may still be running or conversion failed)')
 
     # Check M4B chapters  
-    m4b_path = '/home/eli/PythonProjects/Web-Audio-Book-Reader/storage/audiobooks/_stream_cache_Master_and_Servant_e34d9f629f93/OmniVoice/Jabberwocky-UK/combined.m4b'
+    m4b_path = '/home/eli/PythonProjects/Web-Audio-Book-Reader/storage/audiobooks/_stream_cache_Pride_if_New_Game_Plus__1__f0768531c5d2/OminiVoice/Narrator-UK/combined.m4b'
     if _os.path.exists(m4b_path) and _os.path.getsize(m4b_path) > 100:  
         import subprocess as _subprocess
         probe = _subprocess.run(

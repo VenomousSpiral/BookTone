@@ -146,16 +146,43 @@ class StreamAudiobookService:
                     model_name = model_dir.name
                     voice_name = voice_dir.name
 
-                    # Broader pattern catches both legacy position-based and new hash-named files
-                    audio_files = list(
+                    combined_file = voice_dir / f"combined.{settings.AUDIO_FORMAT}"
+                    has_combined = combined_file.exists()
+
+                    # Step 1: Read ALL audio files from disk in ONE syscall.
+                    audio_files_list = list(
                         voice_dir.glob(f"*.{settings.AUDIO_FORMAT}")
                     )
-                    combined_file = voice_dir / f"combined.{settings.AUDIO_FORMAT}"
-                    completed = len(audio_files)
+
+                    # Step 2: Build set of CAS hashes found on disk (includes stale/orphaned).
+                    disk_cas_hashes: set[str] = set()
+                    for af in audio_files_list:
+                        stem = Path(af).stem
+                        if len(stem) == 16 and all(c in '0123456789abcdef' for c in stem):
+                            disk_cas_hashes.add(stem)
+
+                    # Step 3: Build set of hashes belonging to CURRENT chunk indices.
+                    chunk_hash_set: set[str] = set()
+                    for i in range(total_chunks):
+                        content_hash = ebook_data["chunks"][i].get("_content_hash")
+                        if content_hash:
+                            chunk_hash_set.add(content_hash)
+
+                    # Step 4: Intersection — only hashes that are BOTH on disk AND belong to current chunks.
+                    matched_hashes = disk_cas_hashes & chunk_hash_set
+                    completed = len(matched_hashes)  # correct count for THIS book version
+
                     is_complete = (
-                        completed >= total_chunks if total_chunks > 0 else False
+                        completed == total_chunks and total_chunks > 0
                     )
-                    has_combined = combined_file.exists()
+
+                    # Step 5: Missing chunks — indices whose hash is NOT in disk_cas_hashes.
+                    missing_chunks: list[int] = []
+                    if total_chunks > 0:
+                        for i in range(total_chunks):
+                            content_hash = ebook_data["chunks"][i].get("_content_hash")
+                            if not content_hash or content_hash not in disk_cas_hashes:
+                                missing_chunks.append(i)
 
                     size_bytes = sum(
                         f.stat().st_size for f in voice_dir.iterdir() if f.is_file()
@@ -180,20 +207,6 @@ class StreamAudiobookService:
                         status = "paused"
                     else:
                         status = "not_started"
-
-                    # CAS: use content hash as stable identifier across versions
-                    missing_chunks = []
-                    if total_chunks > 0:
-                        existing_hashed = set()
-                        for af in audio_files:
-                            stem = af.stem
-                            if len(stem) == 16 and all(c in '0123456789abcdef' for c in stem):
-                                existing_hashed.add(stem)
-                        for i in range(total_chunks):
-                            chunk = ebook_data["chunks"][i]
-                            content_hash = chunk.get("_content_hash")
-                            if not content_hash or content_hash not in existing_hashed:
-                                missing_chunks.append(i)
 
                     model_voice_caches.append({
                         "model": model_name,

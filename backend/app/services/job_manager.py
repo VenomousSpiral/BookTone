@@ -18,10 +18,12 @@ class JobManager:
     """In-memory + on-disk job state store. Mirrors the plan's JSON-per-job design."""
 
     def __init__(self, jobs_dir: Union[str, Path], cache_base_dir: Optional[Union[str, Path]] = None):
-        self.jobs_dir = Path(jobs_dir)
+        # Go up 4 levels from job_manager.py (services → app → backend → project root)
+        _default_jobs = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "download_jobs"
+        self.jobs_dir = Path(jobs_dir) if jobs_dir else _default_jobs
         self.jobs_dir.mkdir(parents=True, exist_ok=True)
         # Default to project storage/audiobooks if not provided
-        default_cache = Path(__file__).resolve().parent.parent.parent / "storage" / "audiobooks"
+        default_cache = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "audiobooks"
         self.cache_base_dir = Path(cache_base_dir) if cache_base_dir else default_cache
         # In-memory cache for fast polling lookups
         self._cache: dict[str, dict] = {}
@@ -40,7 +42,8 @@ class JobManager:
         """Find the exact audio-cache directory for an ebook stem.
 
         Uses precise matching so that ``Pride_and_Prejudice.epub`` doesn't match
-        the ``(1)`` variant's directory.
+        the ``(1)`` variant's directory. When multiple dirs match by normalized name,
+        prefers the one with actual audio files (latest version).
         """
         norm_ebook = re.sub(r'[^a-z0-9]', '', ebook_stem.lower())
         candidates: list[tuple[Path, str]] = []
@@ -51,9 +54,20 @@ class JobManager:
             name_part = m.group(1).strip()
             norm_base = re.sub(r'[^a-z0-9]', '', name_part.lower())
             candidates.append((f, norm_base))
+        matches: list[Path] = []
         for f, nb in sorted(candidates, key=lambda x: (-len(x[1]), str(x[0]))):
             if norm_ebook == nb or (nb.startswith(norm_ebook) and nb[len(norm_ebook):] == ""):
-                return f
+                matches.append(f)
+        # Prefer the directory with actual audio files when multiple match
+        if matches:
+            best: Path | None = None
+            best_count = -1
+            for cand in sorted(matches):
+                count = len(list(cand.glob("**/*.opus"))) + len(list(cand.glob("**/*.m4a")))
+                if count > best_count or (count == 0 and best is None):
+                    # Prefer dirs with files; fall back to first match only if all empty
+                    best = cand
+            return best
         return None
 
     def create_job(
@@ -213,8 +227,8 @@ class JobManager:
         return self.create_job(ebook_path, model_name, voice, format_type)
 
 
-# Module-level singleton — created on first import
-DEFAULT_JOBS_DIR = Path(__file__).resolve().parent.parent / "storage" / "download_jobs"
+# Module-level singleton — created on first import (go up 4 levels from services/)
+DEFAULT_JOBS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "download_jobs"
 
 def _get_default_manager() -> JobManager:
     """Get the default job manager instance (creates if needed)."""

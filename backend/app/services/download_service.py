@@ -621,8 +621,9 @@ def convert_mp3(audio_files: list[str], work_dir: str):
 
 # ─── Module-level singleton for job manager (uses project storage directory) ──
 
-_DEFAULT_JOBS_DIR = Path(__file__).resolve().parent.parent / "storage" / "download_jobs"
-_default_cache_base = Path(__file__).resolve().parent.parent / "storage" / "audiobooks"
+# Go up 4 levels from download_service.py (services → app → backend → project root)
+_DEFAULT_JOBS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "download_jobs"
+_default_cache_base = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "audiobooks"
 
 
 def get_job_manager():
@@ -637,6 +638,57 @@ def get_job_manager():
 
 
 # ─── Chapter Data Pipeline for M4B ──────────────────────────────────────
+
+
+def _prefer_dir_with_audio(cache_dir: Path) -> Path:
+    """When multiple cache dirs match by normalized name, prefer the one with audio files.
+
+    Scans sibling directories and returns whichever has the most .opus or .m4a files.
+    Falls back to the provided dir if no siblings have audio data either.
+    """
+    parent = cache_dir.parent
+    stem_prefix = "_stream_cache_"
+    # Extract our normalized name from this directory's pattern
+    m = _re.match(r'^_stream_cache_(.+?)_[a-fA-F0-9]{8,}$', cache_dir.name)
+    if not m:
+        return cache_dir  # can't parse - just use what we have
+
+    norm_ebook = _re.sub(r'[^a-z0-9]', '', m.group(1).lower())
+
+    best_count = -1
+    best_dir: Path | None = cache_dir
+
+    for sibling in sorted(parent.glob("_stream_cache_*")):
+        if not sibling.is_dir():
+            continue
+        sm = _re.match(r'^_stream_cache_(.+?)_[a-fA-F0-9]{8,}$', sibling.name)
+        if not sm:
+            continue
+        s_norm = _re.sub(r'[^a-z0-9]', '', sm.group(1).lower())
+        # Only compare siblings that match the same normalized name
+        if norm_ebook != s_norm:
+            continue
+
+        audio_count = 0
+        for ext in ("opus", "m4a"):
+            model_path = sibling / "OminiVoice"
+            if not model_path.exists():
+                # Try all subdirs to find any voice dir with audio
+                for mp in sibling.iterdir():
+                    if mp.is_dir():
+                        audio_count += len(list(mp.glob(f"*/{ext}"))) + len(list(mp.glob(ext)))
+            else:
+                audio_count += len(list(model_path.glob("*/*" + ext))) + len(list(model_path.glob(ext)))
+
+        # Prefer directories with more audio files; break ties by hash (higher = newer)
+        if audio_count > best_count or (
+            audio_count == best_count and sibling.name > cache_dir.name
+        ):
+            best_count = audio_count
+            best_dir = sibling
+
+    return best_dir  # type: ignore[return-value]
+
 
 def _find_stream_cache_match(
     ebook_stem: str,
@@ -654,6 +706,8 @@ def _find_stream_cache_match(
       3. Require an **exact** match or a prefix where no extra words follow
          our name (rejects ``Pride and Prejudice 1 ...`` when looking for
          ``Pride_and_Prejudice``).
+    When multiple candidates have the same normalized name, prefer the one
+    with actual chunk data.
     """
     import re
 
@@ -683,12 +737,14 @@ def _find_stream_cache_match(
 
         candidates.append((f, norm_base))
 
-    best: Path | None = None
+    all_matches: list[Path] = []
+    best_prefix: Path | None = None
 
     for f, norm_base in sorted(candidates, key=lambda x: (-len(x[1]), str(x[0]))):
-        # 1) Exact match after normalization
+        # 1) Exact match after normalization — collect candidates, prefer one with data
         if norm_ebook == norm_base:
-            return f
+            all_matches.append(f)
+            continue
 
         # 2) Prefix match - our ebook name is a prefix of the cache base name.
         #    But reject if extra alphanumeric characters follow (those indicate
@@ -696,13 +752,41 @@ def _find_stream_cache_match(
         if norm_base.startswith(norm_ebook):
             remainder = norm_base[len(norm_ebook):]
             if remainder == "":
-                return f  # exact prefix with nothing after → perfect match
+                best_prefix = f  # exact prefix with nothing after → perfect match
             # If the cache entry has extra chars, only accept if our ebook name
             # is *longer* than (or equal to) the base - meaning this candidate
             # is a broader/more generic match and shouldn't win over an exact.
             # In practice we want strict prefix: our name fully contained at start.
 
-    return best
+    # If multiple JSONs matched by normalized name, prefer the one with more chunk data (latest version)
+    if all_matches:
+        best_with_data: Path | None = None
+        max_chunks = -1
+        for m in sorted(all_matches):
+            try:
+                with open(m) as fj:
+                    d = json.load(fj)
+                chunks_count = len(d.get("chunks", []))
+                if chunks_count > 0 and chunks_count > max_chunks:
+                    best_with_data = m
+                    max_chunks = chunks_count
+            except Exception:
+                continue
+        return best_with_data or all_matches[0]
+
+    # Fall back to prefix match, then any candidate with data
+    if best_prefix:
+        return best_prefix
+
+    for f in sorted(all_matches):
+        try:
+            with open(f) as fj:
+                d = json.load(fj)
+            if len(d.get("chunks", [])) > 0:
+                return f
+        except Exception:
+            continue
+    return all_matches[0] if all_matches else best
 
 
 def _find_audio_cache_dir(
@@ -714,6 +798,9 @@ def _find_audio_cache_dir(
     Cache dirs are named ``_stream_cache_<ebook_name>_<hash>/``. Uses the same
     precise matching logic as ``_find_stream_cache_match()`` so that
     ``Pride_and_Prejudice.epub`` doesn't match the ``(1)`` variant's directory.
+
+    When multiple directories have the same normalized name (e.g., different
+    ebook versions), prefers the one with actual audio files.
     """
     import re
 
@@ -736,9 +823,11 @@ def _find_audio_cache_dir(
 
     for f, norm_base in sorted(candidates, key=lambda x: (-len(x[1]), str(x[0]))):
         if norm_ebook == norm_base:
-            return f
+            # Multiple dirs may match by normalized name. Prefer the one with audio files.
+            return _prefer_dir_with_audio(f)
+
         if norm_base.startswith(norm_ebook) and norm_base[len(norm_ebook):] == "":
-            return f
+            return f  # exact prefix → perfect match
 
     return None
 
@@ -984,6 +1073,12 @@ def _run_download_job(
                 except OSError:
                     pass
             
+            # Wait for OPUS concat to finish and check result
+            proc.wait()
+            if not out_local.exists() or out_local.stat().st_size < 100:
+                logger.error("[DOWNLOAD] OPUS concat failed (exit=%s, output missing/too small)",
+                           proc.returncode)
+        
         elif format_type == "m4b":
             # ── M4B: AAC re-encode (HAS time=) + chapter embed (fast copy, NO time=) ──
 
@@ -1116,7 +1211,7 @@ def _run_download_job(
             proc_mp3 = _sp.Popen(
                 ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
                  "-i", str(concat_file),
-                 "-c:a", "libmp3lame", "-b:a", "128k", "-ac", 1,
+                 "-c:a", "libmp3lame", "-b:a", "128k", "-ac", "1",
                  "-loglevel", "error", str(out_mp3)],
                 stdout=_sp.PIPE, stderr=_sp.PIPE, text=True)
 
@@ -1159,11 +1254,20 @@ def _run_download_job(
         try:
             if format_type == "m4b":
                 output_path = out_m4b_path
+            elif format_type == "opus" and 'out_local' in dir() and out_local.exists():
+                output_path = out_local
+            elif format_type == "mp3" and 'out_mp3' in dir() and out_mp3.exists():
+                output_path = out_mp3
 
-            combined_path = resolve_combined_audio_path(
-                cache_base_dir, ebook_path, model_name, voice,
-                audio_format=format_type, compute_hash_fn=None,
-            )
+            # Compute the actual content hash of the ebook to match directory naming
+            import hashlib as _hashlib
+            full_ebook = Path(ebook_path).resolve()
+            if not full_ebook.exists():
+                full_ebook = cache_base_dir.parent / "ebooks" / ebook_path  
+            file_hash = _hashlib.md5(full_ebook.read_bytes()).hexdigest()[:12] if full_ebook.exists() else ""
+
+            safe_stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in Path(ebook_path).stem)[:50]
+            combined_path = cache_base_dir / f"_stream_cache_{safe_stem}_{file_hash}" / model_name / voice / f"combined.{format_type}"
             combined_path.parent.mkdir(parents=True, exist_ok=True)
 
             if output_path and os.path.exists(str(output_path)):
