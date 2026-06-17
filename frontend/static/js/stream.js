@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupAudioPlayer();
     startAudioWatchdog();
     applyDisplaySettings();
+    applyVisibilitySettings();
     initSleepTimer();
 
     // Load cache status on initial page load (elements exist in DOM)
