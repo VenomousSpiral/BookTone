@@ -22,11 +22,18 @@ def _resolve_ebook_path(ebook_path: str, base_dir: Path) -> Path:
 
 
 def _hash_from_metadata(file_path: Path) -> str:
-    """Compute a lightweight hash from mtime and size."""
+    """Compute a content-based hash from the full file contents.
+
+    Uses MD5 of actual bytes (not mtime/size) so cache directories are stable
+    across file re-downloads, touches, and metadata changes. This matches the
+    hashing approach used by stream_service._compute_ebook_hash() and ensures
+    that resolve_cache_dir(), get_ebook_cache_info(), and _generation_task all
+    point to the same audiobook directory.
+    """
     import hashlib
     try:
-        stat = file_path.stat()
-        return hashlib.md5(f"{stat.st_mtime}:{stat.st_size}".encode()).hexdigest()[:12]
+        with open(file_path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()[:12]
     except Exception:
         return "unknown"
 

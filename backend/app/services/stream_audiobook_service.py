@@ -161,16 +161,14 @@ class StreamAudiobookService:
                         if len(stem) == 16 and all(c in '0123456789abcdef' for c in stem):
                             disk_cas_hashes.add(stem)
 
-                    # Step 3: Build set of hashes belonging to CURRENT chunk indices.
-                    chunk_hash_set: set[str] = set()
-                    for i in range(total_chunks):
-                        content_hash = ebook_data["chunks"][i].get("_content_hash")
-                        if content_hash:
-                            chunk_hash_set.add(content_hash)
-
-                    # Step 4: Intersection — only hashes that are BOTH on disk AND belong to current chunks.
-                    matched_hashes = disk_cas_hashes & chunk_hash_set
-                    completed = len(matched_hashes)  # correct count for THIS book version
+                    # Step 3: Count how many individual chunks have their audio cached.
+                    # We check each chunk individually (not via set intersection) because
+                    # duplicate content hashes mean multiple chunks share one .opus file,
+                    # and using a set would undercount completed work.
+                    completed = sum(
+                        1 for i in range(total_chunks)
+                        if ebook_data["chunks"][i].get("_content_hash") in disk_cas_hashes
+                    )
 
                     is_complete = (
                         completed == total_chunks and total_chunks > 0
@@ -208,6 +206,12 @@ class StreamAudiobookService:
                     else:
                         status = "not_started"
 
+                    # Get error message from profile if available
+                    profile = self.profile_manager.get_profile(ebook_path, model_name, voice_name)
+                    cache_error = None
+                    if profile and profile.get("status") in ("failed", "not_started"):
+                        cache_error = profile.get("error")
+
                     model_voice_caches.append({
                         "model": model_name,
                         "voice": voice_name,
@@ -226,6 +230,7 @@ class StreamAudiobookService:
                         "size_bytes": size_bytes,
                         "size_mb": round(size_bytes / (1024 * 1024), 2),
                         "cache_dir": str(voice_dir),
+                        "error": cache_error,
                     })
 
             return {
