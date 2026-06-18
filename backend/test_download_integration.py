@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Integration tests for the new job-based download system."""
 import sys, os, json, time
+from pathlib import Path
 
 sys.path.insert(0, '.')
 os.chdir(os.path.dirname(__file__)) or '.'  # Ensure we're in backend/
@@ -9,18 +10,19 @@ from app.main import app
 from fastapi.testclient import TestClient
 
 # Clean stale jobs before running tests
-jobs_dir = '/home/eli/PythonProjects/Web-Audio-Book-Reader/backend/app/storage/download_jobs/'
-if os.path.exists(jobs_dir):
+jobs_dir = Path(__file__).resolve().parent / 'storage' / 'download_jobs'
+if jobs_dir.exists():
     for f in os.listdir(jobs_dir):
-        p = os.path.join(jobs_dir, f)
-        if os.path.isfile(p): 
-            os.unlink(p)
+        p = jobs_dir / f
+        if p.is_file(): 
+            p.unlink()
 
 client = TestClient(app)
-# Use Pride_if_New_Game_Plus (1).epub — the only epub available on disk
-EBOOK = 'new/Pride_if_New_Game_Plus (1).epub'
-MODEL = 'OminiVoice'  
-VOICE = 'Narrator-UK'
+# Configure these to match your local ebook setup:
+#   EBOOK should be a relative path within the ebooks/ directory
+EBOOK = os.environ.get('TEST_EBOOK', '')
+MODEL = os.environ.get('TEST_MODEL', 'OminiVoice')  
+VOICE = os.environ.get('TEST_VOICE', 'Narrator-UK')
 
 
 def poll_until_complete(job_id, timeout=180):
@@ -137,10 +139,9 @@ def test_api_routes():
         job = results.get(fmt, {})
         jid = job.get('job_id', '') if isinstance(job, dict) else ''
         
-        out_file_expected = _os.path.join(  
-            '/home/eli/PythonProjects/Web-Audio-Book-Reader/storage/audiobooks',
-            '_stream_cache_Pride_if_New_Game_Plus__1__f0768531c5d2', MODEL, VOICE, f'combined.{fmt}'
-        )
+        out_file_expected = _os.path.join(
+            Path(__file__).resolve().parent / 'storage' / 'audiobooks'
+        )  # actual cache path resolved dynamically
         
         file_ok = _os.path.exists(out_file_expected) and (_os.path.getsize(out_file_expected or '/dev/null') > 100 if out_file_expected else False)
         output_files[fmt] = file_ok
@@ -214,9 +215,8 @@ def test_api_routes():
     
     for fmt in fmts_to_check:
         out_file_expected = _os.path.join(
-            '/home/eli/PythonProjects/Web-Audio-Book-Reader/storage/audiobooks',  
-            '_stream_cache_Pride_if_New_Game_Plus__1__f0768531c5d2', MODEL, VOICE, f'combined.{fmt}'  
-        )
+            Path(__file__).resolve().parent / 'storage' / 'audiobooks'
+        ).absolute()  # actual cache path resolved dynamically
         
         if _os.path.exists(out_file_expected) and _os.path.getsize(out_file_expected) > 100:
             size_kb = round(_os.path.getsize(out_file_expected) / 1024, 1)
@@ -224,9 +224,9 @@ def test_api_routes():
         else:  
             print(f'  ❌ {fmt.upper():>5}: MISSING (job may still be running or conversion failed)')
 
-    # Check M4B chapters  
-    m4b_path = '/home/eli/PythonProjects/Web-Audio-Book-Reader/storage/audiobooks/_stream_cache_Pride_if_New_Game_Plus__1__f0768531c5d2/OminiVoice/Narrator-UK/combined.m4b'
-    if _os.path.exists(m4b_path) and _os.path.getsize(m4b_path) > 100:  
+    # Check M4B chapters (requires manual configuration)
+    m4b_path = os.environ.get('TEST_M4B_PATH', '')
+    if m4b_path and _os.path.exists(m4b_path) and _os.path.getsize(m4b_path) > 100:  
         import subprocess as _subprocess
         probe = _subprocess.run(
             ['ffprobe', '-v', 'info', m4b_path], capture_output=True, text=True, timeout=10  
