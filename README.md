@@ -1,869 +1,517 @@
-# Audiobook Server
+# 🎧 Web Audio Book Reader (Audiobook Server)
 
-A complete self-hosted audiobook server that converts ebooks (EPUB, TXT, HTML) into audiobooks using TTS (Text-to-Speech) with synchronized lyrics (LRC format), bookmarks, and position tracking. It does not include a TTS engine, you will need an open ai api key or to self host your own. 
+A self-hosted audiobook server that converts e-books (**EPUB**, **PDF**) into streamed audio via AI TTS endpoints. Features a cache-first generation pipeline, real-time text synchronization, playback progress tracking, M4B chapter-embedded audiobook downloads with full metadata, and a themeable web UI with 18+ color themes.
 
+---
 
-## ⚠️ Project Status
+## ✨ Features
 
-This is a personal project in active development and may contain bugs. It is intended for users who are comfortable with self-hosting and independent troubleshooting. Not recommended for production environments.
-It has been mostly vibe coded
+### Core
+- **Multi-format support**: EPUB (via `ebooklib` + BeautifulSoup4) and PDF (via PyPDF2) parsing
+- **AI-powered TTS**: OpenAI-compatible API — works with any self-hosted or cloud TTS server
+- **Cache-first generation**: Audio chunks are cached by content hash on disk; re-generating already-cached segments is a no-op
+- **Streaming architecture**: Separates text streaming (SSE) from audio chunk delivery for real-time playback
+- **Playback progress tracking**: Resume reading position, bookmark chapters across sessions
 
+### TTS Integration
+- **Model agnostic**: Configure any OpenAI-compatible endpoint in `models.json`
+- **Pre-configured providers** included by default:
+  - **Kokoro** (8 voices) — localhost:8880
+  - **higgs_v2** (35+ voices incl. character voices) — localhost:8999
+  - **Voxcmp**, **Chatterbox-Turbo**, **LuxTTS**, **OmniVoice** and more
+- **Configurable**: Per-model base URLs, API keys, voice lists — all editable via the web UI
 
-## Known Working TTS SERVERS
-https://github.com/remsky/Kokoro-FastAPI
+### Audio & Playback
+- **Audio formats**: OPUS (default), MP3, or M4B output
+  - **OPUS** (`opus`) — Default format; efficient concatenation with `-c copy` for fast combined files
+  - **MP3** (`mp3`) — Re-encoded via libmp3lame; maximum player compatibility
+  - **M4B** (`m4b`) — MP4 container with embedded chapter metadata extracted from the ebook's TOC, using `ffprobe` to measure per-chunk durations and FFMETADATA1 for accurate chapter timestamps with interpolation support
+- **Streaming playback**: Chunk-by-chunk audio delivery for instant start
+- **Text synchronization**: Highlighted text segments synced with audio playback in real time
+- **Browser-side cache**: `stream-cache.js` caches streamed audio chunks locally
 
-Other recomended Models:
- - VoxCPM
- - OmniVoice
- - Chatterbox Turbo
+### Download & Export (Job-Based System)
+- **Background conversion jobs**: OPUS concat, MP3 re-encode, and M4B chapter embedding all run as background threads with real-time progress polling via `/download-progress/<job_id>`
+- **M4B metadata extraction**: Automatically reads ebook chapters from parsed TOC, probes each audio chunk's duration via `ffprobe`, builds FFMETADATA1 text with interpolated timestamps, embeds into MP4 container for iTunes/Apple Books compatibility
+- **Skip-if-ready**: If a combined file already exists in the requested format, returns immediately without re-conversion
+- **Format selection**: Choose between `opus` (fastest), `mp3`, or `m4b` at download time
 
-## 🌟 Features
+### File Management
+- **Upload EPUB/PDF** files directly through the web UI (drag-and-drop or file picker)
+- **Duplicate detection**: Choose to replace, copy, ignore, or be prompted on duplicate uploads
+- **File browser**: Navigate directory structure, create folders, move/delete/copy/rename files
+- **Temp cleanup**: Automated garbage collection of temporary upload artifacts
 
-### Core Functionality
-- **Ebook to Audiobook Conversion**: Convert EPUB, TXT, and HTML files to MP3 audiobooks
-- **Self-Hosted TTS**: Works with OpenAI-compatible TTS servers (local or cloud)
-- **LRC Synchronization**: Sentence-by-sentence synchronized text display
-- **Multi-Model Support**: Configure multiple TTS models with different voices
-- **Background Generation**: Process audiobooks asynchronously with progress tracking
-- **File Management**: Upload, organize, move, and delete ebooks in folders
+### Cache Management
+- **Audio cache (CAS)**: Per-chunk content-hash-based caching under `storage/audiobooks/_stream_cache_{safe_stem}_{hash}/{model_name}/{voice_name}/` — chunks are identified by their 16-char MD5 hash so re-generating already-cached segments is a no-op
+- **Parse cache**: Cached parsed book text (with optional images) stored as JSON in `storage/stream_cache/` to avoid re-parsing large books
+- **Cache status & control**: View, generate, pause/resume background generation, and clear caches per-book or globally
 
-### User Interface
-- **Dark Mode**: Modern dark-themed interface optimized for reading
-- **Full-Screen Player**: Distraction-free audiobook playback
-- **Smart Scrolling**: Auto-follows current text, with manual scroll override
-- **Responsive Design**: Works on desktop and mobile devices
+### Persistence — SQLite Backend
+All state now lives in a single SQLite database (`storage/app.db`) with WAL mode:
+- **profiles** table — audiobook generation profiles (ebook_path + model_name + voice → status, progress, timestamps)
+- **chapters** table — chapter boundaries per profile for granular progress tracking
+- **bookmarks** table — unified bookmarks across all contexts ('progress' | 'profile')
+- **settings_kv** table — key-value store for user preferences (replaces separate JSON config files)
 
-### Playback Features
-- **Bookmarking**: Swipe left on any line to bookmark (persists across sessions)
-- **Position Saving**: Auto-saves playback position every 3 seconds
-- **Jump to Current**: Always-visible button to return to currently playing line
-- **Click to Seek**: Tap any line to jump to that position in audio
-- **Progress Tracking**: Visual progress indicator and time display
+### UI / UX
+- **18+ themes**: amber, catppuccin, cyberpunk, dracula, emerald, forest, gruvbox, light, midnight, nord, ocean, sakura, secrets, synthwave, tokyo-night, vhs, vscode-dark — plus default and dark variants
+- **Theme switching** at runtime via JSON theme definitions (no page reload)
+- **Responsive design**: Works on desktop and mobile browsers
+- **Mobile web app ready**: `apple-mobile-web-app-capable` meta tags for full-screen PWA-like experience
 
-### Themes
-- **Dark Mode**: Modern dark-themed interface optimized for reading
-- **Multiple Themes**: Built-in themes (Dark, VS Code Dark, Monokai Secrets)
-- **Change Themes**: Select from the Settings modal in the player (⚙️ button)
-- **Persisted**: Theme choice saves to server and syncs across devices
-- **Easy to Add**: Drop a JSON file into `frontend/static/themes/` — see below
+### User Preferences
+- Per-user preference profiles: default model, voice, audio format, chunk size
+- Theme selection persisted per user session (in SQLite)
+- Upload duplicate behavior configurable globally or per-profile
 
-### Data Persistence
-- All bookmarks saved to disk
-- Playback positions persist across server restarts
-- Works across multiple devices
-- Automatic database backup
+---
 
-## 📋 Requirements
+## 📁 Project Structure
 
-- Python 3.12+
-- FFmpeg (for audio processing)
-- Self-hosted TTS server (OpenAI-compatible API)
-- 2GB+ RAM recommended
-- Storage space for audiobooks
+```
+Web-Audio-Book-Reader/
+├── backend/app/                         # FastAPI application package
+│   ├── main.py                          # App entry: routers, middleware, template mounts
+│   ├── api/routes/                      # API route modules (10 files)
+│   │   ├── audio_routes.py              # Audio streaming & generation settings
+│   │   ├── cache_routes.py              # Stream / parse cache management
+│   │   ├── download_routes.py           # Download conversion jobs + progress polling
+│   │   ├── files.py                     # E-book file management (upload, list, delete...)
+│   │   ├── openai_routes.py             # TTS model / OpenAI-compatible endpoint config
+│   │   ├── preferences.py               # User preference profiles + theme listing
+│   │   ├── progress_routes.py           # Playback progress tracking & bookmarks
+│   │   ├── streaming.py                 # Streaming text/audio endpoints (compat shims)
+│   │   └── text_routes.py               # Text display, highlighting & synchronization
+│   ├── core/
+│   │   └── config.py                    # Settings via pydantic-settings (.env)
+│   ├── models/
+│   │   ├── streaming_models.py          # Pydantic request/response schemas (streaming)
+│   │   ├── openai_config.py             # OpenAI model configuration schema
+│   │   └── streaming.py                 # Streaming-specific models
+│   ├── services/                        # Business logic layer
+│   │   ├── cache_service.py             # Audio chunk caching logic & parse cache management
+│   │   ├── database.py                  # SQLite connection + schema (profiles, bookmarks...)
+│   │   ├── download_service.py          # Combined audio creation: opus/m4b/mp3 via ffmpeg
+│   │   ├── ebook_parser.py              # EPUB/PDF parsing with ebooklib + BeautifulSoup4
+│   │   ├── file_manager.py              # File system operations for ebooks/audiobooks
+│   │   ├── generation_queue.py          # Background task queue for async generation
+│   │   ├── job_manager.py               # Job lifecycle management (start, poll, complete)
+│   │   ├── migrate_from_json.py         # Migration from legacy JSON storage to SQLite
+│   │   ├── profile_manager.py           # Voice/profile management (per-user)
+│   │   ├── settings_service.py          # App-level settings persistence (SQLite-backed)
+│   │   ├── stream_audiobook_service.py  # Audiobook generation orchestrator + progress
+│   │   └── stream_service.py            # Streaming TTS client (OpenAI-compatible)
+│   └── utils/                           # Shared utilities
+│       ├── path_utils.py                # Path sanitization & cache directory resolution
+│       └── validators.py                # Input validation helpers
+├── frontend/                            # Web UI
+│   ├── static/js/                       # Vanilla JS modules (~9 files, ES module pattern)
+│   │   ├── app.js                       # Main entry point + tab navigation
+│   │   ├── file-manager.js              # E-book upload/listing/drag-drop UI logic (45KB)
+│   │   ├── stream-audio.js              # Audio player controls & playback
+│   │   ├── stream-text.js               # Text display, highlighting & synchronization
+│   │   ├── stream-state.js              # Shared streaming state store (reactive pattern)
+│   │   ├── stream-cache.js              # Browser-side cache for streamed audio chunks
+│   │   ├── theme-manager.js             # Theme switching from JSON definitions
+│   │   └── stream.js                    # Streaming orchestration helpers
+│   ├── static/themes/                   # 18 color themes as JSON files
+│   ├── templates/index.html             # Main page template (tabbed interface)
+│   └── templates/stream.html            # Streaming player page template
+├── docker/                              # Docker Compose setup + backend Dockerfile
+├── storage/                             # Runtime data (auto-created on startup)
+│   ├── app.db                           # SQLite database: profiles, bookmarks, settings_kv
+│   ├── audiobooks/                      # Audiobook cache directories (CAS layout below):
+│   │                                  # _stream_cache_{safe_stem}_{md5_hash}/{model_name}/{voice_name}/
+│   │                                  # Each {model}/{voice} dir contains individual chunk audio files
+│   │                                  # named by their 16-char content hash + format extension (.opus/.m4a)
+│   ├── ebooks/                          # Uploaded e-book files (.epub, .pdf, or .txt)
+│   ├── lrc/                             # LRC synced text file storage (for future sync features)
+│   └── stream_cache/                    # Parsed text cache: {title}_{hash}.json with images variant
+├── models.json                          # TTS model configurations (pre-populated with providers)
+├── backend/tests/                       # Backend unit/integration tests
+│   ├── test_routes.py                   # API route testing (pytest + httpx)
+│   ├── test_services.py                 # Service layer testing
+│   ├── test_validators.py               # Validation logic tests
+│   └── test_path_utils.py              # Path traversal protection tests
+├── .env.example                         # Environment variable template
+├── start.sh                             # Quick-start script (venv + pip install)
+├── docker-start.sh                      # Docker quick-start alternative
+├── up-server.sh                         # Server launcher helper
+└── backend/requirements.txt             # Python dependencies (see below)
+```
+
+### Audio Cache Directory Layout
+
+Audio chunks are stored using **Content-Addressable Storage (CAS)**:
+
+```
+storage/audiobooks/_stream_cache_{safe_stem}_{md5_hash}/
+├── {model_name}/                          # e.g., "OminiVoice"
+│   └── {voice_name}/                      # e.g., "Narrator-UK"
+│       ├── a3f2b8c9d4e5f6a7.opus          # Audio chunk (16-char MD5 content hash)
+│       ├── b1c2d3e4f5a6b7c8.opus          # Another audio chunk
+│       └── ...                            # More chunks...
+```
+
+Each audio file is named after the **MD5 prefix** of its text content, so identical passages across chapters or books share a single cached file. The base cache directory name includes a URL-safe stem of the ebook title plus an MD5 hash of the actual file bytes for stability.
+
+---
 
 ## 🚀 Quick Start
 
-### Option 1: Docker (Recommended)
+### Prerequisites
+- **Python 3.10+** with pip
+- A self-hosted or cloud TTS server compatible with the OpenAI API format
+- **ffmpeg + ffprobe** — required for OPUS concat, MP3 re-encode, and M4B chapter metadata embedding
+
+### Option 1: Native Install (Recommended)
 
 ```bash
-./docker-start.sh
+# 1. Clone / navigate to project root
+cd Web-Audio-Book-Reader
+
+# 2. Run the quick-start script (creates venv, installs deps, creates .env)
+bash start.sh
+
+# 3. Start the server
+cd backend && python run.py
+# Or manually: uvicorn app.main:app --reload --host 0.0.0.0 --port 8984
 ```
 
-Then open http://localhost:8000
-
-### Option 2: Manual Setup
+### Option 2: Manual Install
 
 ```bash
-# Install dependencies
-python3 -m venv venv
-source venv/bin/activate
-pip install -r backend/requirements.txt
-
-# Install FFmpeg
-sudo apt-get install ffmpeg  # Ubuntu/Debian
-brew install ffmpeg           # macOS
-
-# Start server
-./up-server.sh
-```
-
-Then open http://localhost:8000
-
-## 📖 Complete Setup Guide
-
-### 1. Installation
-
-**Prerequisites:**
-- Python 3.12+
-- pip package manager
-- FFmpeg
-
-**Install FFmpeg:**
-
-Ubuntu/Debian:
-```bash
-sudo apt-get update
-sudo apt-get install ffmpeg
-```
-
-macOS:
-```bash
-brew install ffmpeg
-```
-
-Windows: Download from https://ffmpeg.org/download.html
-
-**Setup Project:**
-```bash
-cd /home/eli/AI-projects/auido_book_server
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
 cd backend
+python -m venv venv
+source venv/bin/activate     # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cd ..
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8984
 ```
 
-### 2. Configure TTS Server
+### Option 3: Docker Compose (Recommended for production)
 
-Edit `models.json` in the project root:
+```bash
+# Ensure .env exists in the docker/ directory, then:
+docker compose -f docker/docker-compose.yml up --build -d
+```
+
+The server will be available at **http://localhost:8000** (Docker) or **http://localhost:8984** (native).
+
+---
+
+## ⚙️ Configuration
+
+### Environment Variables (.env)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_NAME` | `"Audiobook Server"` | Display name for the application |
+| `HOST` | `"0.0.0.0"` | Bind address |
+| `PORT` | `8984` | HTTP server port (Docker overrides to 8000) |
+| `OPENAI_API_KEY` | *(optional)* | Default API key for cloud TTS providers |
+| `OPENAI_BASE_URL` | *(optional)* | Base URL for OpenAI-compatible endpoints |
+
+### models.json — TTS Provider Configuration
+
+The root-level `models.json` file defines all available TTS providers. Each entry specifies:
 
 ```json
 {
-  "local-tts-server": {
-    "name": "My Local TTS Server",
-    "api_model": "tts-1",
-    "voices": ["am_onyx", "voice2"],
-    "base_url": "http://localhost:8880/v1",
-    "api_key": null
-  },
-  "another-server": {
-    "name": "Another TTS Server",
-    "api_model": "tts-1",
-    "voices": ["alloy", "echo"],
-    "base_url": "http://localhost:8881/v1",
-    "api_key": null
+  "OminiVoice": {
+    "name": "OminiVoice",
+    "api_model": "omnivore",
+    "voices": ["Narrator-UK", "fiftyshades_anna", "Jessica", "Michael"],
+    "base_url": "http://localhost:8869/v1"
   }
 }
 ```
 
-**Configuration Options:**
-- `name`: Display name shown in UI (must be unique)
-- `api_model`: Actual model name sent to TTS API (e.g., "tts-1")
-- `voices`: Comma-separated list of available voices
-- `base_url`: Your TTS server URL (format: `http://host:port/v1`)
-- `api_key`: Optional API key (null for self-hosted servers)
-
-**Multiple Models with Same API:**
-You can now have multiple models that all use the same API model name (e.g., two different servers both using "tts-1"). The display `name` is the unique identifier, while `api_model` is what gets sent to the TTS API.
-
-### 3. Start the Server
-
-**Option A: Using the run script**
-```bash
-cd backend
-python run.py
-```
-
-**Option B: Using uvicorn directly**
-```bash
-cd backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-The server will be available at http://localhost:8000
-
-## 📱 Usage Guide
-
-### First-Time Setup
-
-1. **Add Your TTS Server** (if not in models.json):
-   - Open http://localhost:8000
-   - Click the **Models** tab
-   - Click **Add Model**
-   - Fill in:
-     - Display Name: `My Local TTS Server` (shown in UI)
-     - API Model Name: `tts-1` (sent to TTS API)
-     - Voices: `voice1, voice2, voice3` (comma-separated)
-     - Base URL: `http://localhost:8880/v1`
-     - API Key: Leave empty for self-hosted
-   - Click **Add Model**
-   
-   **Note:** You can add multiple models that use the same API model name. For example, two different TTS servers both using "tts-1" won't conflict because they have different display names.
-
-2. **Upload an Ebook**:
-   - Click the **Files** tab
-   - Click **📤 Upload Ebook** button
-   - Select EPUB, TXT, or HTML file
-   - File appears in the list
-
-3. **Generate Audiobook**:
-   - Find your uploaded ebook
-   - Click **🎵 Generate Audio**
-   - Select model and voice
-   - (Optional) Add instructions like "Speak cheerfully"
-   - Click **Generate**
-
-4. **Monitor Progress**:
-   - Switch to **Audiobooks** tab
-   - Watch real-time progress bar
-   - Generation may take several minutes
-
-5. **Play Audiobook**:
-   - Once status shows **completed**
-   - Click **▶️ Play** button
-   - Full-screen player opens
-
-### Player Features
-
-**Navigation:**
-- Click any text line to jump to that position in audio
-- Use standard audio controls (play/pause/seek/volume)
-- Click **⬇ Jump to Current** button to return to playing line
-- Free scroll while playing - auto-scroll resumes when current line is visible
-
-**Bookmarking:**
-- **Mobile**: Swipe left on any line to bookmark
-- **Desktop**: Click and drag left on a line
-- Bookmarked lines show gold star (★) and gold left border
-- Click **★ View Bookmarks** to see all bookmarks
-- Click on bookmark to jump to it
-- Swipe left again to remove bookmark
-
-**Position Saving:**
-- Position auto-saves every 3 seconds while playing
-- Saves when pausing or closing player
-- Automatically resumes from last position on next play
-- Works across devices and server restarts
-
-### File Management
-
-**Create Folders:**
-- Click **📁 New Folder**
-- Enter folder name
-- Click Create
-
-**Move Files:**
-- Click **↔️ Move** on any file/folder
-- Enter new path
-- Click Move
-
-**Delete:**
-- Click **🗑️ Delete** on any file/folder
-- Confirm deletion
-
-### Managing Models
-
-**Add Model:**
-- Models tab → Add Model
-- Configure name, voices, URL, API key
-
-**Delete Model:**
-- Click **🗑️ Delete** next to model
-- Confirm deletion
-
-## 🐳 Docker Deployment
-
-Complete Docker setup with backend and TTS server.
-
-### Quick Start
-
-```bash
-# Navigate to docker directory
-cd docker
-
-# Copy environment template
-cp .env.example .env
-
-# Start all services
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop services
-docker-compose down
-```
-
-### What's Included
-
-- **audiobook-server**: FastAPI backend with Python 3.12
-- **tts-server**: Kokoro TTS or compatible (OpenAI-compatible API)
-- **Persistent volumes**: Storage for ebooks, audiobooks, LRC files
-- **Network isolation**: Services communicate on private network
-- **Health checks**: Automatic service monitoring
-
-### Configuration
-
-Edit `docker/.env`:
-```env
-HOST=0.0.0.0
-PORT=8000
-OPENAI_BASE_URL=http://tts-server:8880/v1
-TZ=America/New_York
-```
-
-Edit `docker/docker-compose.yml` for advanced configuration:
-- GPU support (uncomment nvidia-docker sections)
-- External TTS server
-- Resource limits
-- Custom networks
-
-### Access
-
-- Web Interface: http://localhost:8000
-- TTS API: http://localhost:8880/v1
-
-### Data Persistence
-
-All data in `storage/` directory persists:
-- `storage/ebooks/` - Uploaded ebooks
-- `storage/audiobooks/` - Generated MP3 files
-- `storage/lrc/` - Synchronized lyrics
-- `storage/audiobooks_db.json` - Metadata, bookmarks, positions
-
-### Backup
-
-```bash
-# Backup storage directory
-tar -czf audiobook-backup-$(date +%Y%m%d).tar.gz storage/
-
-# Restore
-tar -xzf audiobook-backup-YYYYMMDD.tar.gz
-```
-
-### Using External TTS Server
-
-If you have a TTS server outside Docker:
-
-1. Edit `docker-compose.yml`:
-```yaml
-environment:
-  - OPENAI_BASE_URL=http://host.docker.internal:8880/v1
-# Remove depends_on: tts-server
-```
-
-2. Comment out or remove the `tts-server` service
-
-3. Restart: `docker-compose up -d`
-
-### GPU Support
-
-For NVIDIA GPUs:
-
-1. Install nvidia-docker
-2. Uncomment in `docker-compose.yml`:
-```yaml
-tts-server:
-  deploy:
-    resources:
-      reservations:
-        devices:
-          - driver: nvidia
-            count: 1
-            capabilities: [gpu]
-```
-3. Restart: `docker-compose down && docker-compose up -d`
-
-See `docker/README.md` for complete Docker documentation.
-
-## 🔧 Configuration
-
-### Directory Structure
-
-```
-audiobook_server/
-├── backend/
-│   ├── app/
-│   │   ├── api/routes/          # API endpoints
-│   │   ├── core/                # Configuration
-│   │   ├── models/              # Data models
-│   │   └── services/            # Business logic
-│   ├── requirements.txt
-│   └── run.py
-├── frontend/
-│   ├── static/
-│   │   ├── css/styles.css       # Dark mode theme
-│   │   └── js/                  # Player, file manager
-│   └── templates/index.html
-├── storage/
-│   ├── ebooks/                  # Uploaded ebooks
-│   ├── audiobooks/              # Generated MP3s
-│   ├── lrc/                     # Synchronized lyrics
-│   └── audiobooks_db.json       # Metadata & bookmarks
-├── docker/                      # Docker setup
-│   ├── docker-compose.yml
-│   ├── Dockerfile.backend
-│   └── README.md
-├── models.json                  # TTS model configs
-├── docker-start.sh              # Quick Docker start
-└── docker-stop.sh               # Quick Docker stop
-```
-
-### Environment Variables (.env)
-
-```env
-# Server settings
-HOST=0.0.0.0
-PORT=8000              # Change to use different port (e.g., 8001)
-
-# TTS configuration (optional - configure models in UI Models tab)
-OPENAI_BASE_URL=http://localhost:8880/v1
-OPENAI_API_KEY=not-needed-for-self-hosted
-
-# Optional
-TZ=America/New_York
-DEBUG=True
-```
-
-**Port Configuration:**
-- Set `PORT=8001` (or any available port) in `.env` to change the server port
-- Works for both manual and Docker deployments
-- Docker users: Edit `docker/.env` for containerized setup
-
-### App Settings (backend/app/core/config.py)
-
-- Storage paths
-- Default model/voice
-- Chunk size (default: sentence-based, 5 words minimum, 21 chars minimum)
-- API timeouts
-- TTS delay (0.5s between chunks to prevent CUDA errors)
-
-### Adding Themes
-
-Themes are defined as simple JSON files in `frontend/static/themes/`. Each theme maps CSS custom properties to color values.
-
-**Step 1:** Create a new JSON file, e.g. `frontend/static/themes/ocean.json`:
-
-```json
-{
-    "name": "Ocean",
-    "description": "Deep blue ocean theme",
-    "variables": {
-        "--bg-primary": "#0a192f",
-        "--bg-secondary": "#112240",
-        "--bg-tertiary": "#233554",
-        "--text-primary": "#ccd6f6",
-        "--text-secondary": "#8892b0",
-        "--accent": "#64ffda",
-        "--accent-hover": "#4fd1b5",
-        "--border": "#233554",
-        "--success": "#64ffda",
-        "--error": "#ff6b6b",
-        "--warning": "#ffd166",
-        "--primary-color": "#64ffda",
-        "--primary-color-dark": "#4fd1b5",
-        "--primary-color-light": "rgba(100, 255, 218, 0.1)",
-        "--modal-overlay": "rgba(0, 0, 0, 0.8)",
-        "--image-overlay": "rgba(0, 0, 0, 0.9)",
-        "--toast-bg": "rgba(0, 0, 0, 0.8)",
-        "--toast-text": "#ccd6f6",
-        "--scrollbar-track": "#233554",
-        "--scrollbar-thumb": "#495670",
-        "--hover-bg": "#1d3353",
-        "--shadow-color": "rgba(0, 0, 0, 0.4)",
-        "--info-toast-bg": "rgba(204, 214, 246, 0.95)",
-        "--info-toast-text": "#0a192f",
-        "--success-toast-bg": "rgba(100, 255, 218, 0.95)",
-        "--error-toast-bg": "rgba(255, 107, 107, 0.95)"
-    }
-}
-```
-
-**Step 2:** Register the theme in `frontend/static/js/theme-manager.js`. Add the filename to the `themeNames` array in `init()`:
-
-```js
-const themeNames = ['default', 'vscode-dark', 'secrets', 'ocean'];
-```
-
-That's it — the theme will appear in the Settings dropdown on both the main page and streaming page.
-
-**Available CSS Variables:**
-
-| Variable | Purpose |
-|---|---|
-| `--bg-primary` | Body / main background |
-| `--bg-secondary` | Header, panel backgrounds |
-| `--bg-tertiary` | Cards, inputs, nav backgrounds |
-| `--text-primary` | Main text color |
-| `--text-secondary` | Muted / descriptive text |
-| `--accent` | Primary interactive color (buttons, active tabs) |
-| `--accent-hover` | Darker accent for hover states |
-| `--border` | Card / button borders |
-| `--success` | Completed / positive status |
-| `--error` | Danger / failed status |
-| `--warning` | Pending / warning status |
-| `--primary-color` | Streaming player accent (alias of accent) |
-| `--primary-color-dark` | Streaming player hover accent |
-| `--primary-color-light` | Subtle highlight background |
-| `--modal-overlay` | Modal backdrop opacity |
-| `--image-overlay` | Fullscreen image modal backdrop |
-| `--toast-bg` | Toast notification background |
-| `--toast-text` | Toast notification text |
-| `--scrollbar-track` | Scrollbar track |
-| `--scrollbar-thumb` | Scrollbar thumb |
-| `--hover-bg` | Card hover background |
-| `--shadow-color` | Drop shadow color |
-| `--info-toast-bg` | Info toast background |
-| `--info-toast-text` | Info toast text |
-| `--success-toast-bg` | Success toast background |
-| `--error-toast-bg` | Error toast background |
-
-## 🛠️ Troubleshooting
-
-### Server Won't Start
-
-```bash
-# Check if port 8000 is in use
-lsof -i :8000
-
-# Try different port
-cd backend
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8080
-```
-
-### Import Errors
-
-```bash
-# Ensure virtual environment is activated
-source venv/bin/activate
-
-# Reinstall dependencies
-cd backend
-pip install --upgrade -r requirements.txt
-```
-
-### FFmpeg Not Found
-
-```bash
-# Verify installation
-ffmpeg -version
-
-# Install if missing
-sudo apt-get install ffmpeg  # Ubuntu/Debian
-brew install ffmpeg           # macOS
-```
-
-### Audiobook Generation Fails
-
-**Check TTS Server:**
-```bash
-curl -X POST http://localhost:8880/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{"model":"tts-1","voice":"am_onyx","input":"Test"}' \
-  --output test.mp3
-```
-
-If test.mp3 is created with audio, TTS server is working.
-
-**Common Issues:**
-- **GPU out of memory**: Delay between chunks already set to 0.5s (prevents CUDA errors)
-- **Model not found**: Check model name in models.json
-- **Connection refused**: Verify TTS server is running and URL is correct
-- **Wrong format**: TTS server must return MP3
-
-### CUDA Errors (GPU)
-
-If TTS server fails with CUDA errors:
-
-```bash
-# Restart TTS server
-docker restart tts-server
-
-# Or if running directly
-kill <pid>
-# Then restart your TTS server
-
-# Clear GPU memory
-sudo rmmod nvidia_uvm
-sudo modprobe nvidia_uvm
-```
-
-The audiobook server already has 0.5-second delay between chunks to prevent GPU overload.
-
-### Position Not Saving
-
-**Check Browser Console (F12):**
-- Look for "Saving position:" logs
-- Check for API errors
-
-**Verify Database:**
-```bash
-cat storage/audiobooks_db.json | jq '.'
-```
-
-Should show last_position and bookmarks for each audiobook.
-
-### Bookmarks Not Working
-
-**Check Browser Console (F12):**
-- Look for "Touch start/end" logs
-- Look for "Swipe left detected!" message
-- Swipe must be > 30px horizontal, < 50px vertical, < 500ms
-
-**Test on Desktop:**
-- Click and drag left on a line
-- Should see console logs
-
-### File Upload Fails
-
-```bash
-# Check storage permissions
-ls -la storage/
-
-# Fix if needed
-chmod -R 755 storage/
-```
-
-## 📊 API Reference
-
-### Files Endpoints
-
-- `GET /api/files/list?path=` - List files in directory
-- `POST /api/files/upload` - Upload ebook (multipart/form-data)
-- `POST /api/files/create-directory` - Create folder
-- `POST /api/files/move` - Move file/folder (JSON: {source, destination})
-- `DELETE /api/files/delete?file_path=` - Delete file/folder
-- `GET /api/files/download?file_path=` - Download file
-
-### Audiobooks Endpoints
-
-- `GET /api/audiobooks/list` - List all audiobooks with status
-- `GET /api/audiobooks/{id}` - Get audiobook metadata
-- `POST /api/audiobooks/generate` - Generate audiobook (JSON: {file_path, model, voice, instructions})
-- `GET /api/audiobooks/{id}/audio` - Stream/download audio file
-- `GET /api/audiobooks/{id}/lrc` - Get LRC synchronized lyrics
-- `POST /api/audiobooks/{id}/position` - Update position (JSON: {position})
-- `POST /api/audiobooks/{id}/bookmark` - Toggle bookmark (JSON: {chunk_index})
-- `GET /api/audiobooks/{id}/bookmarks` - Get all bookmarks
-- `POST /api/audiobooks/{id}/pause` - Pause generation
-- `POST /api/audiobooks/{id}/resume` - Resume generation
-- `DELETE /api/audiobooks/{id}` - Delete audiobook
-
-### Models Endpoints
-
-- `GET /api/openai/models` - List configured TTS models
-- `POST /api/openai/models` - Add/update model (JSON: {name, voices, base_url, api_key})
-- `DELETE /api/openai/models/{name}` - Delete model
-- `GET /api/openai/models/{name}/voices` - Get model voices
-
-### Health Check
-
-- `GET /health` - Server health status
-
-### Interactive API Docs
-
-Visit http://localhost:8000/docs for Swagger UI with all endpoints documented.
-
-## 🚦 Performance
-
-### Resource Usage
-
-- **CPU**: Low when idle, moderate during generation
-- **RAM**: ~200MB base + ~50MB per concurrent generation
-- **Storage**: ~1MB per minute of audio (MP3 format)
-- **Network**: Minimal (local TTS server recommended)
-
-### Optimization Tips
-
-1. **Chunk Size**: Sentence-based chunking works well (5 words min, 21 chars min)
-2. **TTS Delay**: 0.5s between chunks prevents GPU overload
-3. **Position Save**: 3 seconds balances responsiveness and I/O
-4. **Audio Format**: MP3 provides good compression/quality
-
-### Testing API Performance
-
-```bash
-# API health check
-curl http://localhost:8000/health
-
-# List files
-curl http://localhost:8000/api/files/list
-
-# List audiobooks
-curl http://localhost:8000/api/audiobooks/list
-
-# TTS server test
-curl -X POST http://localhost:8880/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{"model":"tts-1","voice":"am_onyx","input":"Performance test"}' \
-  --output perf-test.mp3
-```
-
-## 🔐 Security Notes
-
-⚠️ **For Development/Personal Use:**
-- Runs on 0.0.0.0:8000 (accessible on local network)
-- No authentication/authorization
-- File uploads unrestricted
-- API keys stored in plaintext
-
-**For Production:**
-- Add reverse proxy with authentication (nginx/Traefik)
-- Enable HTTPS
-- Implement rate limiting
-- Validate file types and sizes
-- Sanitize file paths
-- Use environment variables for secrets
-- Add CSRF protection
-- Restrict network access with firewall
-
-## 📱 Mobile Support
-
-### Gestures
-- **Swipe Left**: Bookmark line (> 30px horizontal, < 50px vertical, < 500ms)
-- **Tap Line**: Jump to position
-- **Scroll**: Free scrolling (auto-scroll resumes when current line visible)
-
-### Tips
-- Use landscape mode for better reading
-- Bookmarks and positions sync across all devices
-- Access from mobile: `http://YOUR_SERVER_IP:8000`
-
-### Finding Server IP
-```bash
-# Linux/macOS
-ip addr show | grep inet
-
-# Or check server logs when starting
-# Shows: Uvicorn running on http://0.0.0.0:8000
-```
-
-## 🤝 Contributing
-
-This is a personal project, but suggestions welcome!
-
-### Development
-
-```bash
-# Backend (with hot reload)
-cd backend
-source ../venv/bin/activate
-python run.py
-
-# Frontend
-# Edit files in frontend/static and frontend/templates
-# FastAPI serves them with hot reload
-```
-
-### Project Dependencies
-
-**Backend:**
-- FastAPI 0.115.0 - Web framework
-- Uvicorn - ASGI server
-- Pydantic - Data validation
-- OpenAI 1.51.0 - TTS API client
-- ebooklib 0.18 - EPUB parsing
-- BeautifulSoup4 - HTML parsing
-- pydub - Audio processing
-- FFmpeg - Audio encoding
-- Jinja2 - Templates
-- python-multipart - File uploads
-
-**Frontend:**
-- Vanilla JavaScript (no frameworks)
-- CSS3 with dark theme
-- Touch gesture detection
-
-## 🎯 Known Limitations
-
-- Single user (no authentication)
-- No audio streaming (full file loads)
-- No playlist/queue feature
-- No full-text search in ebooks
-- No adjustable playback speed in UI (use browser controls)
-- LRC timestamps are approximated (not word-level)
-
-## 💡 Future Enhancement Ideas
-
-- Multiple user support with authentication
-- Playlist management
-- Adjustable chunk size in UI
-- Different voice per character (dialogue detection)
-- Playback speed control in player
-- Chapter detection and navigation
-- Export bookmarks feature
-- Share positions/bookmarks between users
-- Progressive audio loading
-- Download audiobook as file
-- Sleep timer
-- Text search in ebooks
-- PDF support
-- Batch processing
-- Voice cloning integration
-
-## 📜 License
-
-Personal project - use as you wish!
-
-## 🙏 Acknowledgments
-
-- FastAPI for the excellent web framework
-- Pydantic for data validation
-- OpenAI for the TTS API standard
-- FFmpeg for audio processing
-- All open-source TTS projects (Kokoro, Coqui, etc.)
-
-## 📞 Support
-
-For issues or questions:
-
-1. **Check logs**:
-   - Browser console (F12) for frontend errors
-   - Terminal output for backend errors
-   - TTS server logs for API issues
-
-2. **Verify configuration**:
-   - models.json has correct TTS server URL
-   - TTS server is running and accessible
-   - Storage directories have correct permissions
-
-3. **Test independently**:
-   - Test TTS server with curl
-   - Check API docs at http://localhost:8000/docs
-   - Verify FFmpeg installation
-
-4. **Common solutions**:
-   - Restart server: `./up-server.sh`
-   - Restart Docker: `./docker-start.sh`
-   - Clear browser cache
-   - Check network connectivity
-
-## 🎉 Quick Reference
-
-### One-Line Commands
-
-```bash
-# Start manually
-./up-server.sh
-
-# Start with Docker
-./docker-start.sh
-
-# Stop Docker
-./docker-stop.sh
-
-# Test TTS server
-curl -X POST http://localhost:8880/v1/audio/speech -H "Content-Type: application/json" -d '{"model":"tts-1","voice":"am_onyx","input":"Test"}' --output test.mp3
-
-# Check health
-curl http://localhost:8000/health
-
-# View logs (Docker)
-docker-compose -f docker/docker-compose.yml logs -f
-
-# Backup data
-tar -czf backup-$(date +%Y%m%d).tar.gz storage/
-```
-
-### File Locations
-
-- **Configuration**: `models.json`
-- **Environment**: `.env` or `docker/.env`
-- **Database**: `storage/audiobooks_db.json`
-- **Uploads**: `storage/ebooks/`
-- **Generated**: `storage/audiobooks/` and `storage/lrc/`
-- **Logs**: Terminal output or Docker logs
+Providers can be added, edited, or removed via the web UI's **Models** tab — changes persist to `models.json`.
+
+### Runtime Settings (via Web UI / Config)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Audio Format | `opus` | Output format: `"opus"` (default), `"mp3"`, or `"m4b"` |
+| Chunk Size | 500 chars | Characters per audio segment (smaller = better quality, more requests) |
+| Upload Duplicate Behavior | `popup` | Action on duplicate upload: `"popup"`, `"replace"`, `"copy"`, `"ignore"` |
 
 ---
 
-**Enjoy your audiobook server!** 📚🎧
+## 📡 API Reference
+
+All endpoints are prefixed with `/api/`. The full API is documented via Swagger UI at **http://localhost:8984/docs** (or the equivalent Docker port).
+
+### File Management (`/api/files`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/files/list?path=` | List files/folders in a directory |
+| `POST` | `/api/files/upload` | Upload an EPUB/PDF/TXT file (multipart) |
+| `POST` | `/api/files/upload-with-replace-cache` | Upload + replace existing book's cache |
+| `POST` | `/api/files/upload-with-copy-cache` | Upload + copy cache from existing book |
+| `POST` | `/api/files/upload-ignore-cache` | Upload without any cache interaction |
+| `GET` | `/api/files/upload-check?name=&path=` | Check for duplicate filenames |
+| `DELETE` | `/api/files/delete?file_path=` | Delete a file or folder |
+| `POST` | `/api/files/move` | Move/rename files and folders |
+| `POST` | `/api/files/create-directory` | Create a new directory |
+| `GET` | `/api/files/download?file_path=` | Download a file from storage |
+
+### TTS Models (`/api/openai`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/openai/models` | List all configured models |
+| `POST` | `/api/openai/models` | Add a new model provider |
+| `DELETE` | `/api/openai/models/{name}` | Remove a model |
+| `GET` | `/api/openai/models/{name}/voices` | Get available voices for a model |
+
+### Text Streaming (`/api/text`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/text/parse?ebook_path=&chapters=` | Parse an e-book into text segments |
+| `GET` | `/api/text/text?path=&start_char=&end_char=` | Get a specific text segment |
+| `POST` | `/api/text/text-batch` | Batch-request multiple text segments |
+| `GET` | `/api/text/chapter?path=&pos=` | Find chapter at a given character position |
+| `GET` | `/api/text/image?path=&image_id=` | Extract embedded image from e-book |
+
+### Audio Streaming (`/api/stream`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/stream/audio` | Generate audio for a text segment (returns raw bytes) |
+| `GET` | `/api/stream/settings` | Get current stream settings |
+| `POST` | `/api/stream/settings` | Update default model/voice/format preferences |
+
+### Download Jobs (`/api/stream`) — New Job-Based System
+
+Background conversion with real-time progress polling. Supports **opus**, **mp3**, and **m4b** formats (M4B includes chapter metadata embedding).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/stream/download-start?ebook_path=&model=&voice=&format_type=` | Start conversion job (`opus`, `mp3`, or `m4b`). Returns `job_id`. Skip-if-ready if output exists. |
+| `GET` | `/api/stream/download-progress/<job_id>` | Poll real-time progress (percentage, status message) |
+| `GET` | `/api/stream/download/<job_id>` | Download the completed combined file by job ID |
+
+### Legacy Download Endpoints (backward-compatible shims)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/stream/prepare-download?ebook_path=&model=&voice=` | Redirects to download-start with format=opus |
+| `GET` | `/api/stream/download-status?id=` | Legacy status check for existing output files |
+| `GET` | `/api/stream/download?id=&format=` | Stream the combined audiobook file (legacy) |
+| `GET` | `/api/stream/download-source?ebook_path=` | Download original ebook source |
+
+### Progress & Bookmarks (`/api/progress`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/progress?ebook_path=` | Get playback progress for a book |
+| `POST` | `/api/progress` | Update reading position |
+| `POST` | `/api/progress/bookmark` | Toggle a bookmark at current position |
+| `GET` | `/api/progress/bookmarks?ebook_path=` | List all bookmarks for a book |
+| `DELETE` | `/api/progress?ebook_path=` | Clear progress data |
+
+### Cache Management (`/api/cache`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/cache/cache-info?ebook_path=` | Get cache stats for a book (audio + parse) |
+| `POST` | `/api/cache/generate-cache` | Start background audio generation |
+| `POST` | `/api/cache/pause` | Pause background generation |
+| `POST` | `/api/cache/resume` | Resume paused background generation |
+| `GET` | `/api/cache/cache-status?ebook_path=` | Get current cache status per model/voice |
+| `DELETE` | `/api/cache/clear-cache?ebook_path=` | Clear audio cache for a book (all models) |
+| `POST` | `/api/cache/clear-cache/{model}/{voice}` | Clear audio cache for one model/voice combo |
+
+### Parse Cache (`/api/cache`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/cache/parse-cache-status?ebook_path=` | Check parse cache status for a book |
+| `GET` | `/api/cache/parse-cache-list` | List all books with parsed text cached |
+| `DELETE` | `/api/cache/clear-parse-cache?ebook_path=` | Clear parse cache for one book |
+| `POST` | `/api/cache/clear-all-parse-caches` | Clear all parse caches |
+
+### Preferences (`/api/preferences`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/preferences/themes` | List available themes (JSON files) |
+| `GET` | `/api/preferences/get` | Get current user preferences |
+| `POST` | `/api/preferences/save` | Save/update user preferences |
+
+---
+
+## 🎨 Themes
+
+The UI ships with **18 color themes**, swappable at runtime via the theme selector in the settings panel:
+
+| Theme | Style |
+|-------|-------|
+| default | Light, standard |
+| dark / vscode-dark | Dark mode variants |
+| dracula | Popular dark purple/pink palette |
+| nord | Cool arctic blues/grays |
+| gruvbox | Warm retro terminal |
+| catppuccin | Soft pastels (mocha/macchiato/frappe) |
+| synthwave / cyberpunk / vhs | Neon-retro aesthetics |
+| tokyo-night | VS Code-inspired night theme |
+| emerald / forest | Green nature palettes |
+| sakura | Pink cherry blossom |
+| ocean | Deep blue-teal |
+| midnight | Very dark blue-black |
+| amber / light | Warm single-tone variants |
+
+Themes are defined as JSON files in `frontend/static/themes/`. Add a new theme by creating a file like `mytheme.json` and it will appear automatically.
+
+---
+
+## 📥 Download Formats Explained
+
+### OPUS (default)
+Fastest conversion — uses ffmpeg's `-c copy` to concatenate opus chunks without re-encoding. Minimal CPU, excellent quality-to-size ratio. Best for local/server-side use.
+
+```bash
+# Under the hood:
+ffmpeg -f concat -i filelist.txt -c copy combined.opus
+```
+
+### MP3
+Re-encodes all chunks through libmp3lame for maximum player compatibility (VLC, Windows Media Player, older car stereos). Slower and larger files than OPUS.
+
+```bash
+# Under the hood:
+ffmpeg -i input.opus -codec:a libmp3lame -qscale:a 2 combined.mp3
+```
+
+### M4B (Apple Books / iTunes compatible)
+Creates an MP4 container with embedded chapter metadata extracted from the ebook's table of contents. Uses `ffprobe` to probe each audio chunk's duration, then builds FFMETADATA1 text with interpolated timestamps for accurate chapter navigation. Compatible with Apple Books, VLC, and most modern audiobook players.
+
+```bash
+# Under the hood:
+# 1. Concat opus chunks → intermediate.mp4 (copy mode)
+ffmpeg -f concat -i filelist.txt -c copy intermediate.mp4
+# 2. Probe durations for chapter timestamps via ffprobe
+ffprobe -show_entries format=duration <chunk>
+# 3. Build FFMETADATA1 with interpolated start/end times per chapter
+# 4. Re-encode with metadata embedded:
+ffmpeg -i intermediate.mp4 -i metadata.txt -map_metadata 1 -c copy combined.m4b
+```
+
+---
+
+## 🐳 Docker Deployment
+
+### Quick Start (Docker Compose)
+
+```bash
+cd docker/
+cp .env.example .env   # Optional: customize settings
+docker compose up --build -d
+```
+
+The Docker setup:
+- Builds from `docker/Dockerfile.backend` (Python 3.12 slim, installs system deps + Python packages)
+- Uses `network_mode: host` so the container can reach TTS servers on localhost or local network
+- Exposes port **8000** on the host
+- Mounts three volumes for persistent data:
+  - `storage/` — all uploaded ebooks, cached audiobooks, SQLite database (app.db), and LRC files survive container restarts
+  - `models.json` — TTS provider configuration persists across deploys
+
+### Docker Environment Variables
+
+Override defaults by setting env vars in your `.env` file or directly on the service. The default port for Docker is **8000**.
+
+---
+
+## 🔒 Security Notes
+
+- **Path sanitization**: All user-supplied paths are validated against directory traversal attacks via `utils/path_utils.py`
+- **CORS**: Broad defaults (`allow_origins=["*"]`) — restrict in production by setting the appropriate CORS headers or reverse proxy configuration
+- **GZip compression** enabled for responses ≥1 KB
+
+For production use, consider:
+- Adding authentication (reverse proxy with basic auth / JWT)
+- Restricting CORS origins to your domain
+- Using HTTPS via a reverse proxy (nginx, Caddy)
+
+---
+
+## 🧪 Testing
+
+```bash
+# Run all backend tests
+cd backend && pytest -v
+
+# Run specific test file
+pytest tests/test_routes.py -v
+```
+
+Test files:
+- `backend/tests/test_routes.py` — API endpoint testing with pytest + httpx
+- `backend/tests/test_services.py` — Service layer unit tests
+- `backend/tests/test_validators.py` — Input validation coverage
+- `backend/tests/test_path_utils.py` — Path traversal protection tests
+
+---
+
+## 📦 Dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| fastapi | 0.115.0 | Web framework |
+| uvicorn[standard] | 0.30.0 | ASGI server |
+| pydantic | 2.9.0 | Data validation |
+| pydantic-settings | 2.5.0 | Environment / .env config |
+| openai | 1.51.0 | OpenAI-compatible TTS client |
+| ebooklib | 0.18 | EPUB parsing |
+| beautifulsoup4 | 4.12.3 | HTML/XML content extraction |
+| PyPDF2 | 3.0.1 | PDF text extraction |
+| pydub | 0.25.1 | Audio format handling (MP3/OPUS) |
+
+**System dependencies**: `ffmpeg` + `ffprobe` — required for audio concat, MP3 re-encode, and M4B chapter metadata embedding. Install via your package manager (`apt install ffmpeg`, `brew install ffmpeg`).
+
+---
+
+## 🔧 Development
+
+### Running with hot-reload
+
+```bash
+cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8984
+```
+
+Frontend JS changes are picked up automatically (plain static files, no build step). Backend changes require the `--reload` flag.
+
+### Adding a new TTS provider
+
+1. Add an entry to `models.json`:
+   ```json
+   "MyProvider": {
+     "name": "My Provider",
+     "api_model": "tts-1",
+     "voices": ["voice_a"],
+     "base_url": "http://localhost:9000/v1"
+   }
+   ```
+2. Or use the web UI **Models** tab to add/edit/remove providers dynamically.
+
+### Adding a new theme
+
+Create `frontend/static/themes/mytheme.json`:
+```json
+{
+  "name": "My Theme",
+  "background": "#0d1117",
+  "foreground": "#c9d1d9"
+}
+```
+
+---
+
+## 📝 License
+
+This project is open source. See the repository for license details.
