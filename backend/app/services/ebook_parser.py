@@ -34,6 +34,43 @@ class EbookParser:
     """Parse ebooks and extract text content"""
     
     SUPPORTED_FORMATS = ['.epub', '.txt', '.html', '.pdf']
+
+    @staticmethod
+    def _extract_chapter_name(soup: BeautifulSoup, item) -> str:
+        """Extract a human-readable chapter name from an EPUB document's HTML.
+
+        Priority: <h1> / <h2> headings → <title> tag → epublib EpubHtml.title →
+                  get_name() (filename) → 'Chapter N'.
+        """
+        # 1. Look for heading tags that look like chapter titles
+        for tag in ['h1', 'h2']:
+            el = soup.find(tag)
+            if el:
+                text = el.get_text(strip=True)
+                if text and len(text) < 300:   # guard against giant headings
+                    return text
+
+        # 2. Fall back to the document's <title> element (inside <head>)
+        title_tag = soup.find('title')
+        if title_tag:
+            text = title_tag.get_text(strip=True)
+            if text and len(text) < 300:
+                return text
+
+        # 3. epublib EpubHtml.title attribute (often set to "Chapter N")
+        if hasattr(item, 'title') and item.title:
+            t = str(item.title).strip()
+            if t and t != '':
+                return t
+
+        # 4. Fall back to the internal filename
+        name = item.get_name() or ''
+        if name:
+            return Path(name).stem   # strip extension for readability
+
+        return "Chapter"
+    
+    SUPPORTED_FORMATS = ['.epub', '.txt', '.html', '.pdf']
     
     def __init__(self):
         self._image_cache = {}  # Cache for extracted images {ebook_path: {image_id: base64_data}}
@@ -103,8 +140,7 @@ class EbookParser:
                     text = re.sub(r' +', ' ', text)
                     
                     if text:
-                        # Try to get chapter name from title
-                        chapter_name = item.get_name() or "Chapter"
+                        chapter_name = self._extract_chapter_name(soup, item)
                         chunks.append({
                             'text': text,
                             'chapter': chapter_name
@@ -220,7 +256,7 @@ class EbookParser:
                     text_with_markers = re.sub(r'<<<\s*IMAGE_(\d+)\s*>>>', r'<<<IMAGE_\1>>>', text_with_markers)
                     
                     if text_with_markers or image_markers:
-                        chapter_name = item.get_name() or "Chapter"
+                        chapter_name = self._extract_chapter_name(soup, item)
                         chunks.append({
                             'text': text_with_markers,
                             'chapter': chapter_name,
