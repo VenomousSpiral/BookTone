@@ -106,7 +106,7 @@ Web-Audio-Book-Reader/
 │       ├── path_utils.py                # Path sanitization & cache directory resolution
 │       └── validators.py                # Input validation helpers
 ├── frontend/                            # Web UI
-│   ├── static/js/                       # Vanilla JS modules (~9 files, ES module pattern)
+│   ├── static/js/                       # Vanilla JS modules (8 files, ES module pattern)
 │   │   ├── app.js                       # Main entry point + tab navigation
 │   │   ├── file-manager.js              # E-book upload/listing/drag-drop UI logic (45KB)
 │   │   ├── stream-audio.js              # Audio player controls & playback
@@ -126,8 +126,7 @@ Web-Audio-Book-Reader/
 │   │                                  # Each {model}/{voice} dir contains individual chunk audio files
 │   │                                  # named by their 16-char content hash + format extension (.opus/.m4a)
 │   ├── ebooks/                          # Uploaded e-book files (.epub, .pdf, or .txt)
-│   ├── lrc/                             # LRC synced text file storage (for future sync features)
-│   └── stream_cache/                    # Parsed text cache: {title}_{hash}.json with images variant
+│   └── stream_cache/
 ├── models.json                          # TTS model configurations (pre-populated with providers)
 ├── backend/tests/                       # Backend unit/integration tests
 │   ├── test_routes.py                   # API route testing (pytest + httpx)
@@ -256,6 +255,8 @@ All endpoints are prefixed with `/api/`. The full API is documented via Swagger 
 | `DELETE` | `/api/files/delete?file_path=` | Delete a file or folder |
 | `POST` | `/api/files/move` | Move/rename files and folders |
 | `POST` | `/api/files/create-directory` | Create a new directory |
+| `POST` | `/api/files/create-file` | Create a new file with optional content |
+| `DELETE` | `/api/files/cleanup-temp` | Clean up temporary upload artifacts |
 | `GET` | `/api/files/download?file_path=` | Download a file from storage |
 
 ### TTS Models (`/api/openai`)
@@ -267,15 +268,15 @@ All endpoints are prefixed with `/api/`. The full API is documented via Swagger 
 | `DELETE` | `/api/openai/models/{name}` | Remove a model |
 | `GET` | `/api/openai/models/{name}/voices` | Get available voices for a model |
 
-### Text Streaming (`/api/text`)
+### Text Streaming (`/api/stream`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/text/parse?ebook_path=&chapters=` | Parse an e-book into text segments |
-| `GET` | `/api/text/text?path=&start_char=&end_char=` | Get a specific text segment |
-| `POST` | `/api/text/text-batch` | Batch-request multiple text segments |
-| `GET` | `/api/text/chapter?path=&pos=` | Find chapter at a given character position |
-| `GET` | `/api/text/image?path=&image_id=` | Extract embedded image from e-book |
+| `GET` | `/api/stream/parse?ebook_path=&chapters=` | Parse an e-book into text segments |
+| `GET` | `/api/stream/text?path=&start_char=&end_char=` | Get a specific text segment |
+| `POST` | `/api/stream/text-batch` | Batch-request multiple text segments |
+| `GET` | `/api/stream/image?path=&image_id=` | Extract embedded image from e-book |
+| `GET` | `/api/stream/chapter?path=&pos=` | Find chapter at a given character position |
 
 ### Audio Streaming (`/api/stream`)
 
@@ -304,44 +305,43 @@ Background conversion with real-time progress polling. Supports **opus**, **mp3*
 | `GET` | `/api/stream/download?id=&format=` | Stream the combined audiobook file (legacy) |
 | `GET` | `/api/stream/download-source?ebook_path=` | Download original ebook source |
 
-### Progress & Bookmarks (`/api/progress`)
+### Progress & Bookmarks (`/api/stream`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/progress?ebook_path=` | Get playback progress for a book |
-| `POST` | `/api/progress` | Update reading position |
-| `POST` | `/api/progress/bookmark` | Toggle a bookmark at current position |
-| `GET` | `/api/progress/bookmarks?ebook_path=` | List all bookmarks for a book |
-| `DELETE` | `/api/progress?ebook_path=` | Clear progress data |
+| `GET` | `/api/stream/progress?ebook_path=` | Get playback progress for a book |
+| `POST` | `/api/stream/progress` | Update reading position |
+| `POST` | `/api/stream/bookmark` | Toggle a bookmark at current position |
+| `GET` | `/api/stream/bookmarks?ebook_path=` | List all bookmarks for a book |
+| `DELETE` | `/api/stream/progress?ebook_path=` | Clear progress data |
 
-### Cache Management (`/api/cache`)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/cache/cache-info?ebook_path=` | Get cache stats for a book (audio + parse) |
-| `POST` | `/api/cache/generate-cache` | Start background audio generation |
-| `POST` | `/api/cache/pause` | Pause background generation |
-| `POST` | `/api/cache/resume` | Resume paused background generation |
-| `GET` | `/api/cache/cache-status?ebook_path=` | Get current cache status per model/voice |
-| `DELETE` | `/api/cache/clear-cache?ebook_path=` | Clear audio cache for a book (all models) |
-| `POST` | `/api/cache/clear-cache/{model}/{voice}` | Clear audio cache for one model/voice combo |
-
-### Parse Cache (`/api/cache`)
+### Cache Management (`/api/stream`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/cache/parse-cache-status?ebook_path=` | Check parse cache status for a book |
-| `GET` | `/api/cache/parse-cache-list` | List all books with parsed text cached |
-| `DELETE` | `/api/cache/clear-parse-cache?ebook_path=` | Clear parse cache for one book |
-| `POST` | `/api/cache/clear-all-parse-caches` | Clear all parse caches |
+| `GET` | `/api/stream/cache-info?ebook_path=` | Get cache stats for a book (audio + parse) |
+| `POST` | `/api/stream/generate-cache` | Start background audio generation |
+| `POST` | `/api/stream/cache-pause` | Pause background generation |
+| `POST` | `/api/stream/cache-resume` | Resume paused background generation |
+| `GET` | `/api/stream/cache-status?ebook_path=` | Get current cache status per model/voice |
+| `DELETE` | `/api/stream/clear-cache?ebook_path=` | Clear audio cache for a book (all models) |
 
-### Preferences (`/api/preferences`)
+### Parse Cache (`/api/stream`)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/preferences/themes` | List available themes (JSON files) |
-| `GET` | `/api/preferences/get` | Get current user preferences |
-| `POST` | `/api/preferences/save` | Save/update user preferences |
+| `GET` | `/api/stream/parse-cache-status?ebook_path=` | Check parse cache status for a book |
+| `GET` | `/api/stream/parse-cache-list` | List all books with parsed text cached |
+| `DELETE` | `/api/stream/parse-cache?ebook_path=` | Clear parse cache for one book |
+| `DELETE` | `/api/stream/parse-cache-all` | Clear all parse caches |
+
+### Preferences (`/api/audiobooks`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/audiobooks/themes` | List available themes (JSON files) |
+| `GET` | `/api/audiobooks/preferences/get` | Get current user preferences |
+| `POST` | `/api/audiobooks/preferences/save` | Save/update user preferences |
 
 ---
 
@@ -418,7 +418,7 @@ The Docker setup:
 - Uses `network_mode: host` so the container can reach TTS servers on localhost or local network
 - Exposes port **8000** on the host
 - Mounts three volumes for persistent data:
-  - `storage/` — all uploaded ebooks, cached audiobooks, SQLite database (app.db), and LRC files survive container restarts
+  - `storage/` — all uploaded ebooks, cached audiobooks, SQLite database (app.db) survive container restarts
   - `models.json` — TTS provider configuration persists across deploys
 
 ### Docker Environment Variables
