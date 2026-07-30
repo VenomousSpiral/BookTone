@@ -298,7 +298,12 @@ def probe_chapters(filepath):
 
 def _load_chunk_hash_to_index(ebook_path: str,
                               cache_base_dir: Path) -> dict[str, int]:
-    """Build {content_hash: index} map from parsed ebook data."""
+    """Build {content_hash: first_occurrence_index} map from parsed ebook data.
+
+    When duplicate chunks share the same content hash (identical text), we store
+    only the EARLIEST index so that audio file sorting places duplicates at their
+    correct position in the sequence rather than losing them or placing them last.
+    """
     stream_cache_json = _find_stream_cache_match(
         Path(ebook_path).stem, cache_base_dir)
 
@@ -313,7 +318,11 @@ def _load_chunk_hash_to_index(ebook_path: str,
         for c in data.get("chunks", []):
             h = c.get("_content_hash")
             if h:
-                chunk_map[h] = int(c["index"])
+                idx = int(c["index"])
+                # Store the FIRST occurrence of each hash (earliest index wins).
+                # This ensures duplicates sort to their correct position.
+                if h not in chunk_map or idx < chunk_map[h]:
+                    chunk_map[h] = idx
         return chunk_map
     except Exception as e:
         logger.warning(
@@ -354,23 +363,75 @@ def build_concat_list(audio_files: list[str], output_dir: str) -> Path:
     return concat_file
 
 
-def build_chunk_durations(audio_files: list[str]) -> dict[int, float]:
-    """Probe each opus file and return {file_index: duration_seconds}.
+def build_chunk_durations(
+    audio_files: list[str], chunks_data=None,
+) -> dict[int, float]:
+    """Probe each opus file and return {chunk_index: duration_seconds}.
 
-    Uses sequential file-based indices [0..n-1] as keys so that chapter lookups
-    (which reference chunk_time_index positions) resolve correctly.
+    When duplicate chunks share the same content hash (identical text), multiple
+    logical chunk indices map to one physical audio file. This function handles that:
+      - First occurrence of a hash → actual file duration at its LOGICAL index
+      - Subsequent duplicates → 0 seconds (same audio already counted in first occurrence)
+
+    If no chunks_data is provided, falls back to position-based indexing.
     """
-    durations = {}
-    for i, fpath in enumerate(audio_files):
-        r = run(["ffprobe", "-v", "quiet",
-                 "-show_entries", "format=duration",
-                 "-of", "csv=p=0", str(fpath)])
-        dur_str = r.stdout.strip()
-        if dur_str:
+    durations: dict[int, float] = {}
+
+    if not chunks_data:
+        # Fallback: simple position-based mapping
+        for i, fpath in enumerate(audio_files):
+            r = run(["ffprobe", "-v", "quiet",
+                     "-show_entries", "format=duration",
+                     "-of", "csv=p=0", str(fpath)])
+            dur_str = r.stdout.strip()
+            if dur_str:
+                try:
+                    durations[i] = float(dur_str)
+                except ValueError:
+                    pass
+        return durations
+
+    # Pre-compute: map each content hash to its earliest (first) chunk index.
+    # This represents the sorted order of unique audio files on disk.
+    hash_first_index: dict[str, int] = {}
+    for c in chunks_data:
+        h = c.get("_content_hash")
+        if not h:
+            continue
+        idx_val = int(c["index"])
+        if h not in hash_first_index or idx_val < hash_first_index[h]:
+            hash_first_index[h] = idx_val
+
+    seen_hashes: set[str] = set()
+
+    for c in chunks_data:
+        h = c.get("_content_hash")
+        if not h:
+            continue
+        idx = int(c["index"])
+
+        # Physical file position (0-indexed) = count of unique hashes whose first-occurrence <= this index.
+        phys_pos = sum(1 for fi in hash_first_index.values() if fi <= idx) - 1
+
+        dur_val = 0.0
+        if 0 <= phys_pos < len(audio_files):
+            r = run(["ffprobe", "-v", "quiet",
+                     "-show_entries", "format=duration",
+                     "-of", "csv=p=0", str(audio_files[phys_pos])])
+            dur_str = r.stdout.strip()
             try:
-                durations[i] = float(dur_str)
+                dur_val = float(dur_str)
             except ValueError:
                 pass
+
+        if h not in seen_hashes:
+            # First occurrence: actual duration at its LOGICAL index.
+            durations[idx] = dur_val
+            seen_hashes.add(h)
+        else:
+            # Duplicate chunk (same content): zero additional time since already counted
+            durations[idx] = 0.0
+
     return durations
 
 
@@ -421,7 +482,11 @@ def build_ffmetadata(chapters, chunk_durations, total_duration_sec):
     }
 
     def _make_chapter_name(raw_name: str, idx: int) -> str:
-        if not os.path.splitext(raw_name)[1] and '/' not in raw_name:
+        # Strip trailing punctuation (periods used in chapter names like "Chapter 1:" or
+        # "Afterword.") before checking for file extensions. This prevents false positives
+        # where e.g., splitext("Chapter 1:") returns ('Chapter 1', '.') treating the period as an extension.
+        stripped = raw_name.rstrip('. ')
+        if not os.path.splitext(stripped)[1] and '/' not in raw_name:
             cleaned = ' '.join(raw_name.split()).strip()
             return cleaned if cleaned else f"Section {idx + 1}"
 
@@ -514,7 +579,8 @@ def convert_opus(audio_files: list[str], work_dir: str):
 
 
 def convert_m4b(audio_files: list[str], chapters, total_duration_sec=None,
-                chunk_time_index=None, work_dir: str = None):
+                chunk_time_index=None, work_dir: str = None,
+                chunks_data=None):
     """Concatenate opus → MP4(AAC) then embed chapter metadata for M4B.
 
     Returns a dict with keys: 'success', 'output_path', 'duration',
@@ -561,7 +627,7 @@ def convert_m4b(audio_files: list[str], chapters, total_duration_sec=None,
         dur = float(total_duration_sec)
 
     # Compute per-chunk durations from the actual audio files for accurate chapter times
-    chunk_durations = build_chunk_durations(audio_files)
+    chunk_durations = build_chunk_durations(audio_files, chunks_data)
 
     metadata_text = build_ffmetadata(chapters, chunk_durations, dur)
     with open(str(chapters_file), "w") as f:
@@ -832,6 +898,38 @@ def _find_audio_cache_dir(
     return None
 
 
+def _load_raw_chunks_for_duplicates(
+    ebook_path: str, cache_base_dir: Path,
+) -> Optional[list[dict]]:
+    """Load raw chunk data from stream_cache JSON for duplicate hash handling.
+
+    Returns the list of chunk dicts with '_content_hash' fields needed by
+    build_chunk_durations to correctly handle chunks that share identical content.
+    """
+    import json as _json
+
+    stream_cache_json = _find_stream_cache_match(
+        Path(ebook_path).stem, cache_base_dir)
+
+    if not (stream_cache_json and stream_cache_json.exists()):
+        return None
+
+    try:
+        with open(stream_cache_json) as f:
+            data = _json.load(f)
+        chunks_data = list(data.get("chunks", []) or [])
+        # Ensure each chunk has an index for proper mapping
+        for i, c in enumerate(chunks_data):
+            if "index" not in c:
+                c["index"] = i
+        return chunks_data
+    except Exception as e:
+        logger.warning(
+            "[DOWNLOAD] Failed to load raw chunk data: %s", e,
+        )
+        return None
+
+
 def load_chapters_for_conversion(ebook_path: str, cache_base_dir: Path):
     """Load chapters and timing data for M4B chapter embedding.
 
@@ -858,6 +956,7 @@ def load_chapters_for_conversion(ebook_path: str, cache_base_dir: Path):
             with open(stream_cache_json) as f:
                 data = json.load(f)
 
+            raw_chunks_data = [dict(c) for c in data.get("chunks")]  # For duplicate handling
             chunks_data = list(data.get("chunks", []) or [])
 
             # Build chunk_time_index from cached data if available
@@ -1167,7 +1266,8 @@ def _run_download_job(
 
             # Step B: Compute per-chunk durations and build chapter metadata
             actual_dur = probe_duration(str(temp_mp4)) or (est_total_dur if est_total_dur else 30.0)
-            chunk_durations = build_chunk_durations(str_audio)
+            raw_chunks_data = _load_raw_chunks_for_duplicates(ebook_path, cache_base_dir)
+            chunk_durations = build_chunk_durations(str_audio, raw_chunks_data)
             meta_text = build_ffmetadata(chapters_list, chunk_durations, actual_dur)
 
             with open(str(ch_file), "w") as f:
