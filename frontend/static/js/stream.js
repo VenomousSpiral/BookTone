@@ -29,7 +29,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 window.addEventListener('beforeunload', () => {
+    // Clean up all intervals
     if (state.audioWatchdogInterval) clearInterval(state.audioWatchdogInterval);
+    if (state.audiobookPollInterval) clearInterval(state.audiobookPollInterval);  // stream-cache.js
+    // Also clean up download-related intervals from stream-cache.js and file-manager.js patterns
+    try { if (downloadPollInterval) clearInterval(downloadPollInterval); } catch(e) {}
+    
+    // Clean up any leftover modals
+    for (const id of ['downloadProgressModal', 'formatSelectModal']) {
+        const el = document.getElementById(id);
+        if (el && el.parentNode) el.remove();
+    }
+    
     if (state.currentAudioBlobUrl) URL.revokeObjectURL(state.currentAudioBlobUrl);
     if (state.chunkObserver) { state.chunkObserver.disconnect(); state.chunkObserver = null; }
     state.audioCache.clear();
@@ -584,7 +595,7 @@ function showChapters() {
         state.book.chapters.forEach((ch, i) => {
             const isActive = state.currentChunk >= ch.start_chunk && state.currentChunk <= ch.end_chunk;
             html += `<div class="chapter-item${isActive ? ' active' : ''}" onclick="jumpToChapter(${i})">
-                <div class="chapter-name">${ch.name || 'Chapter ' + (i + 1)}</div>
+                <div class="chapter-name">${esc(ch.name || 'Chapter ' + (i + 1))}</div>
                 <div class="chapter-info">Chunks ${ch.start_chunk + 1}–${ch.end_chunk + 1}</div>
             </div>`;
         });
@@ -621,7 +632,7 @@ function showBookmarks() {
             text = text.trim().substring(0, 120) || `Chunk #${idx + 1}`;
             html += `<div class="chapter-item" onclick="jumpToChunk(${idx}); closeBookmarksModal();">
                 <div class="chapter-name">Bookmark #${idx + 1}</div>
-                <div class="chapter-info">${text}...</div>
+                <div class="chapter-info">${esc(text)}...</div>
             </div>`;
         });
         list.innerHTML = html;
@@ -808,14 +819,40 @@ function onProgressBarRelease(value) {
 
 // ========== MODAL CLOSE HELPERS ==========
 
-function closeChaptersModal() { closeModal('chapters'); }
-function closeSettingsModal() { closeModal('settings'); }
-function closeBookmarksModal() { closeModal('bookmarks'); }
+function closeChaptersModal() { 
+    if (state.audiobookPollInterval) clearInterval(state.audiobookPollInterval);
+    state.audiobookPollInterval = null;
+    closeModal('chapters');
+}
+
+function closeSettingsModal() {
+    // Clean up download polling intervals before closing settings modal
+    try { onCloseSettings(); } catch(e) {}
+    if (state.audiobookPollInterval) clearInterval(state.audiobookPollInterval);
+    state.audiobookPollInterval = null;
+    closeModal('settings');
+}
+
+function closeBookmarksModal() {
+    closeModal('bookmarks');
+}
 
 // ========== NAVIGATION ==========
 
 function goBack() {
-    stopPlaying();
+    try {
+        stopPlaying();
+    } catch(e) { console.error('[goBack] stopPlaying error:', e); }
+    
+    // Clean up any leftover download modals that could block clicks
+    const leftoverModals = ['downloadProgressModal', 'formatSelectModal'];
+    for (const id of leftoverModals) {
+        const el = document.getElementById(id);
+        if (el && el.parentNode) el.remove();
+    }
+    // Also clean up any loading overlay that might be stuck
+    try { hideLoading(); } catch(e) {}
+    
     // Navigate back to the ebook's parent directory
     const parentDir = EBOOK_PATH.split('/').slice(0, -1).join('/');
     shutdownAndNavigate('/?path=' + encodeURIComponent(parentDir));

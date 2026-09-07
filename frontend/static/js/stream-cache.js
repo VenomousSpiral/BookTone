@@ -18,7 +18,7 @@ function showFormatSelectionModal(model, voice) {
             <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">Choose your preferred format:</p>
             
             <!-- OPUS -->
-            <div class="format-option" onclick="selectFormat('${model}','${voice}','opus')" 
+            <div class="format-option" onclick="selectFormat('${escAttr(model)}','${escAttr(voice)}','opus')" 
                  style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>OPUS (.opus)</strong><br>
@@ -27,7 +27,7 @@ function showFormatSelectionModal(model, voice) {
             </div>
             
             <!-- M4B -->  
-            <div class="format-option" onclick="selectFormat('${model}','${voice}','m4b')"
+            <div class="format-option" onclick="selectFormat('${escAttr(model)}','${escAttr(voice)}','m4b')"
                  style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>M4B with Chapters (.m4b)</strong><br>
@@ -36,7 +36,7 @@ function showFormatSelectionModal(model, voice) {
             </div>
             
             <!-- MP3 -->
-            <div class="format-option" onclick="selectFormat('${model}','${voice}','mp3')"
+            <div class="format-option" onclick="selectFormat('${escAttr(model)}','${escAttr(voice)}','mp3')"
                  style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>MPEG-3 (.mp3)</strong><br>  
@@ -58,13 +58,29 @@ function closeFormatModal() {
     if (el) el.remove();
 }
 
-/** Called when user selects a format — starts conversion + shows progress */
+/** Clean up all download-related intervals and overlays */
+function cleanupDownloadState() {
+    // Clear polling intervals
+    try { 
+        if (downloadPollInterval) clearInterval(downloadPollInterval); 
+        downloadPollInterval = null; 
+    } catch(e) {}
+    try { 
+        if (streamPollInterval) clearInterval(streamPollInterval); 
+        streamPollInterval = null;
+    } catch(e) {}
+    // Remove leftover modals
+    for (const id of ['downloadProgressModal', 'formatSelectModal']) {
+        const el = document.getElementById(id);
+        if (el && el.parentNode) el.remove();
+    }
+}
+
+/** Called when user selects a format — starts conversion */
 async function selectFormat(model, voice, formatType) {
     closeFormatModal();
     
     showToast(`Starting ${formatType.toUpperCase()} download...`);
-    showProgressOverlay(formatType);
-    
     try {
         // 1. Start the job  
         const params = new URLSearchParams({
@@ -78,13 +94,26 @@ async function selectFormat(model, voice, formatType) {
         
         currentDownloadJobId = job.job_id;
         
-        // 2. Start polling for progress updates (every second during conversion)
-        pollProgress(job.job_id);
+        // 2. If settings modal is open, immediately refresh inline progress AND set up polling.
+        //    Otherwise poll silently in background.
+        if (isSettingsModalOpen()) {
+            startStreamDownloadsPolling(job.job_id);
+            // Backend daemon thread may not have registered job yet — retry once
+            setTimeout(() => { refreshStreamActiveDownloads(); }, 800);
+        } else {
+            streamSilentDownloadJobId = job.job_id;
+            streamPollInterval = setInterval(() => streamSilentProgressCheck(), 1000);
+        }
     } catch (error) {
-        hideProgressOverlay();
         showToast('Error: ' + error.message, true);
         console.error('[DOWNLOAD] Error starting download:', error);
     }
+}
+
+/** Check if the settings modal is currently visible */
+function isSettingsModalOpen() {
+    const el = document.getElementById('settingsModal');
+    return el && (el.style.display === 'flex' || el.classList.contains('active'));
 }
 
 /** Show a progress overlay with real-time updates */
@@ -233,7 +262,7 @@ function renderAudiobookPanel(data) {
         html += '<select id="profileSelector" onchange="switchProfile(this.value)" style="width:100%;padding:6px;margin-bottom:8px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;">';
         caches.forEach(c => {
             const statusIcon = c.status === 'completed' ? '🟢' : c.status === 'in_progress' ? '⏳' : c.status === 'paused' ? '⏸️' : '❌';
-            html += `<option value="${c.model}_${c.voice}">${c.model} / ${c.voice} (${c.completed_chunks}/${c.total_chunks}) ${statusIcon}</option>`;
+            html += `<option value="${esc(c.model)}_${esc(c.voice)}">${esc(c.model)} / ${esc(c.voice)} (${c.completed_chunks}/${c.total_chunks}) ${statusIcon}</option>`;
         });
         html += '</select>';
     }
@@ -246,32 +275,32 @@ function renderAudiobookPanel(data) {
 
     html += `<div style="margin-bottom:8px;font-size:12px;">`;
     html += `<strong>${statusText}</strong><br>`;
-    html += `<span style="color:#666;">${activeCache.model} / ${activeCache.voice} · ${activeCache.completed_chunks}/${activeCache.total_chunks} chunks · ${activeCache.size_mb} MB</span>`;
+    html += `<span style="color:#666;">${esc(activeCache.model)} / ${esc(activeCache.voice)} · ${activeCache.completed_chunks}/${activeCache.total_chunks} chunks · ${activeCache.size_mb} MB</span>`;
     html += `</div>`;
 
     html += '<div style="display:flex;gap:6px;flex-wrap:wrap;">';
 
     if (activeCache.status === 'completed') {
         // CHANGED: Use format selection modal instead of direct OPUS download
-        html += `<button type="button" onclick="showFormatSelectionModal('${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:11px;">📥 Download...</button>`;
+        html += `<button type="button" onclick="showFormatSelectionModal('${escAttr(activeCache.model)}', '${escAttr(activeCache.voice)}')" class="btn" style="padding:4px 8px;font-size:11px;">📥 Download...</button>`;
         html += `<button type="button" onclick="downloadSource()" class="btn" style="padding:4px 8px;font-size:11px;">⬇️ Source</button>`;
-        html += `<button type="button" onclick="handleCacheRegenerate('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:12px;">🔄 Regenerate</button>`;
+        html += `<button type="button" onclick="handleCacheRegenerate('${escAttr(EBOOK_PATH)}', '${escAttr(activeCache.model)}', '${escAttr(activeCache.voice)}')" class="btn" style="padding:4px 8px;font-size:12px;">🔄 Regenerate</button>`;
     }
 
     if (activeCache.status === 'in_progress') {
-        html += `<button type="button" onclick="handleCachePause('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:12px;">⏸️ Pause</button>`;
+        html += `<button type="button" onclick="handleCachePause('${escAttr(EBOOK_PATH)}', '${escAttr(activeCache.model)}', '${escAttr(activeCache.voice)}')" class="btn" style="padding:4px 8px;font-size:12px;">⏸️ Pause</button>`;
     } else if (activeCache.status === 'paused' || activeCache.status === 'failed') {
-        html += `<button type="button" onclick="handleCacheResume('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn" style="padding:4px 8px;font-size:12px;">▶️ Resume</button>`;
+        html += `<button type="button" onclick="handleCacheResume('${escAttr(EBOOK_PATH)}', '${escAttr(activeCache.model)}', '${escAttr(activeCache.voice)}')" class="btn" style="padding:4px 8px;font-size:12px;">▶️ Resume</button>`;
     }
 
-    html += `<button type="button" onclick="handleCacheDelete('${EBOOK_PATH}', '${activeCache.model}', '${activeCache.voice}')" class="btn btn-danger" style="padding:4px 8px;font-size:12px;">🗑️</button>`;
+    html += `<button type="button" onclick="handleCacheDelete('${escAttr(EBOOK_PATH)}', '${escAttr(activeCache.model)}', '${escAttr(activeCache.voice)}')" class="btn btn-danger" style="padding:4px 8px;font-size:12px;">🗑️</button>`;
     html += '</div>';
 
     if (caches.length > 1) {
         html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border-color);">';
         caches.forEach(c => {
             const icon = c.status === 'completed' ? '✅' : c.status === 'in_progress' ? '⏳' : c.status === 'paused' ? '⏸️' : '❌';
-            html += `<div style="font-size:12px;padding:3px 0;">${icon} ${c.model}/${c.voice} · ${c.completed_chunks}/${c.total_chunks} · ${c.size_mb} MB</div>`;
+            html += `<div style="font-size:12px;padding:3px 0;">${icon} ${esc(c.model)}/${esc(c.voice)} · ${c.completed_chunks}/${c.total_chunks} · ${c.size_mb} MB</div>`;
         });
         html += '</div>';
     }
@@ -405,6 +434,135 @@ async function switchProfile(modelVoiceKey) {
 }
 
 
+// ========== ACTIVE DOWNLOADS (inline in stream settings modal) ──────
+
+let streamPollInterval = null;
+let streamSilentDownloadJobId = null;  // When settings panel is closed, poll silently
+
+/** Start polling and rendering active downloads inside the stream settings modal */
+function startStreamDownloadsPolling(jobId) {
+    if (streamPollInterval) clearInterval(streamPollInterval);
+    refreshStreamActiveDownloads();
+    
+    const poll = async () => {
+        try {
+            // Check if job is still active
+            const res = await fetch(`${API_BASE}/stream/active-downloads`);
+            if (!res.ok) throw new Error('Failed to check downloads');
+            
+            const data = await res.json();
+            const relevantJob = (data.jobs || []).find(j => j.job_id === jobId && ['pending', 'converting'].includes(j.status));
+            
+            if (!relevantJob) {
+                // Job is done or failed — stop polling
+                clearInterval(streamPollInterval);
+                streamPollInterval = null;
+                return;
+            }
+            
+            refreshStreamActiveDownloads();
+        } catch (error) {
+            console.error('[STREAM DOWNLOADS] Poll error:', error);
+        }
+    };
+    
+    poll();  // First check immediately
+    streamPollInterval = setInterval(poll, 1500);  // Then every 1.5s
+}
+
+/** Refresh the Active Downloads section in the settings modal */
+function refreshStreamActiveDownloads() {
+    const sectionEl = document.getElementById('streamActiveDownloadsSection');
+    const contentEl = document.getElementById('streamDownloadsContent');
+    if (!sectionEl || !contentEl) return;
+
+    fetch(`${API_BASE}/stream/active-downloads`)
+        .then(r => r.json())
+        .then(data => {
+            // Filter to only show downloads for this ebook
+            const relevantJobs = (data.jobs || []).filter(
+                j => j.ebook_path === EBOOK_PATH && ['pending', 'converting'].includes(j.status)
+            );
+
+            if (relevantJobs.length === 0) {
+                sectionEl.style.display = 'none';
+                return;
+            }
+
+            // Show the section with inline progress cards
+            sectionEl.style.display = 'block';
+            let html = '';
+
+            relevantJobs.forEach(job => {
+                const pct = job.progress_pct || 0;
+                const icon = job.status === 'pending' ? '\u23F8\uFE0F' : '\uD83D\uDD25';
+                
+                html += `
+                    <div style="margin-bottom: 10px; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-weight: bold; font-size: 13px;">${icon} ${job.format_type.toUpperCase()}</span>
+                            <button onclick="cancelStreamDownload('${escAttr(job.job_id)}')" class="btn btn-danger" 
+                                    style="padding: 2px 8px; font-size: 10px;">\u2715</button>
+                        </div>
+                        <div style="background: var(--bg-tertiary); border-radius: 3px; height: 6px; overflow: hidden; margin-bottom: 4px;">
+                            <div id="_sd_prog_${esc(job.job_id)}" 
+                                 style="height: 100%; width: ${pct}%; background: linear-gradient(90deg, #ff950a, #ff6b00); transition: width 0.3s;"></div>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary);">
+                            <span>${esc(job.message || 'Starting...')}</span>
+                            <span>${pct}%</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            contentEl.innerHTML = html;
+        })
+        .catch(() => {
+            sectionEl.style.display = 'none';
+        });
+}
+
+/** Cancel a download from the stream settings modal */
+async function cancelStreamDownload(jobId) {
+    try {
+        const res = await fetch(`${API_BASE}/stream/download-cancel/${jobId}`, { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to cancel');
+
+        showToast('Download cancelled');
+        
+        if (streamPollInterval) clearInterval(streamPollInterval);
+        streamPollInterval = null;
+        refreshStreamActiveDownloads();
+    } catch (error) {
+        console.error('[CANCEL STREAM] Error:', error);
+        showToast('Failed to cancel', true);
+    }
+}
+
+/** Silent progress check when settings modal is closed */
+function streamSilentProgressCheck() {
+    if (!streamPollInterval || !streamSilentDownloadJobId) return;
+    
+    fetch(`${API_BASE}/stream/download-progress/${streamSilentDownloadJobId}`)
+        .then(r => r.json())
+        .then(job => {
+            // If settings modal is now open, switch to inline updates
+            if (isSettingsModalOpen() && streamPollInterval) return;
+            
+            if (job.status === 'ready') {
+                clearInterval(streamPollInterval);
+                streamSilentDownloadJobId = null;
+                showToast(`Download ready! Starting download as .${job.format_type}`);
+                setTimeout(() => { try { downloadByJobId(job.job_id); } catch(e) {
+                    console.error('[DOWNLOAD] Download failed:', e);
+                    window.open(`${API_BASE}/stream/download/${job.job_id}`, '_blank');
+                }}, 500);
+            }
+        })
+        .catch(() => {});
+}
+
 // ========== CACHE STATUS (in settings modal) ────────────────────────────
 
 async function refreshCacheStatus() {
@@ -429,7 +587,7 @@ async function refreshCacheStatus() {
             if (data.model_voice_caches && data.model_voice_caches.length > 0) {
                 html += '<div style="font-size:12px; color:#666;">';
                 data.model_voice_caches.forEach(cache => {
-                    html += `<div style="margin:2px 0;">• ${cache.model}/${cache.voice}: ${cache.files} files (${cache.size_mb} MB)</div>`;
+                    html += `<div style="margin:2px 0;">• ${esc(cache.model)}/${esc(cache.voice)}: ${cache.files} files (${cache.size_mb} MB)</div>`;
                 });
                 html += '</div>';
             }
@@ -445,8 +603,21 @@ async function refreshCacheStatus() {
 
 // ========== EXPORTS ─────────────────────────────────────────────────────
 
+// Called when settings modal closes — clean up any active download polling
+function onCloseSettings() {
+    // Clear all intervals
+    if (streamPollInterval) clearInterval(streamPollInterval);
+    streamPollInterval = null;
+    try { 
+        if (downloadPollInterval) clearInterval(downloadPollInterval); 
+        downloadPollInterval = null; 
+    } catch(e) {}
+}
+
 window.showFormatSelectionModal = showFormatSelectionModal;
 window.closeFormatModal = closeFormatModal;
+window.cleanupDownloadState = cleanupDownloadState;
+window.onCloseSettings = onCloseSettings;
 window.selectFormat = selectFormat;
 window.downloadByJobId = downloadByJobId;
 window.loadAudiobookProfiles = loadAudiobookProfiles;
@@ -457,3 +628,5 @@ window.handleCacheDelete = handleCacheDelete;
 window.handleCacheRegenerate = handleCacheRegenerate;
 window.downloadSource = downloadSource;
 window.switchProfile = switchProfile;
+window.refreshStreamActiveDownloads = refreshStreamActiveDownloads;
+window.cancelStreamDownload = cancelStreamDownload;

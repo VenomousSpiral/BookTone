@@ -5,6 +5,8 @@ Endpoints (NEW job-based system):
     POST   /api/stream/download-start       Start a download conversion (returns job_id)
     GET    /api/stream/download-progress/<job_id>  Poll real-time progress updates  
     GET    /api/stream/download/<job_id>    Download the completed combined file by job ID
+    GET    /api/stream/active-downloads     List all active/in-progress download jobs (inline UI)
+    POST   /api/stream/download-cancel/<job_id> Cancel an in-progress download job
 
 Endpoints (backward-compat shims):
     POST   /api/stream/prepare-download     → redirects to download-start with format=opus
@@ -25,7 +27,6 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import FileResponse
 
-from app.services.job_manager import JobManager
 from app.services.download_service import get_job_manager, _run_download_job
 from app.core.config import settings
 from app.utils.path_utils import resolve_combined_audio_path
@@ -394,7 +395,6 @@ async def get_download_status_legacy(
             )[:12]
 
             # Try to find a matching job by scanning jobs directory  
-            import os as _os_module
             jobs_dir = Path(__file__).resolve().parent.parent / "storage" / "download_jobs"
             
             if jobs_dir.exists():
@@ -476,6 +476,87 @@ async def download_combined_legacy(
         logger.error("[DOWNLOAD-LEGACY] Error: %s", e)
         if isinstance(e, HTTPException):
             raise
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── ACTIVE DOWNLOADS LISTING (inline progress support) ─────────────────
+
+@router.get("/active-downloads")
+async def list_active_downloads():
+    """Return all download jobs that are in 'pending' or 'converting' state.
+
+    Reads from both the in-memory cache and on-disk job files so that active
+    downloads survive browser refreshes. Only includes jobs with status
+    'pending' or 'converting' — completed/failed/cancelled jobs are excluded.
+
+    Returns a JSON object: { "jobs": [ ... ] }
+    Sorted by created_at descending (newest first).
+    """
+    try:
+        job_mgr = get_job_manager()
+        active_jobs = []
+
+        # 1. Read from in-memory cache (fast path)
+        for job_id, job in list(job_mgr._cache.items()):
+            if job.get("status") in ("pending", "converting"):
+                active_jobs.append(dict(job))
+
+        # 2. Also scan on-disk files for any jobs not yet loaded into memory.
+        #    This is a safety net — the daemon thread should have populated cache,
+        #    but if it hasn't started yet or server restarted, disk has the truth.
+        import json as _json
+        from pathlib import Path as _Path
+        for jp in sorted(job_mgr.jobs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            cache_key = jp.name.replace(".json", "")
+            if cache_key in job_mgr._cache:
+                continue  # Already loaded from memory cache
+            try:
+                with open(jp) as f:
+                    data = _json.load(f)
+                if data.get("status") in ("pending", "converting"):
+                    active_jobs.append(dict(data))
+            except (_json.JSONDecodeError, OSError):
+                pass  # Skip corrupt files
+
+        # Sort by created_at descending (newest first)
+        active_jobs.sort(key=lambda j: j.get("created_at", ""), reverse=True)
+
+        return {"jobs": active_jobs}
+
+    except Exception as e:
+        logger.error("[ACTIVE-DOWNLOADS] Error listing jobs: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/download-cancel/{job_id}")
+async def cancel_download(job_id: str):
+    """Cancel a download job by marking it as failed.
+
+    Sets status='failed', message='Cancelled by user'. The background ffmpeg
+    thread may continue running until completion — that's fine because the UI
+    will no longer show this job in active downloads and considers it cancelled.
+    If the conversion finishes after cancellation, a new download start request
+    for the same ebook/model/voice/format will detect the existing output file
+    via skip-if-ready logic and return status=ready immediately.
+    """
+    try:
+        job_mgr = get_job_manager()
+        job = job_mgr.get_job(job_id)
+
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        # Mark as cancelled — the background thread will naturally finish or be
+        # ignored. The frontend hides it from active downloads and shows a toast.
+        job_mgr.update_job(job_id, status="failed",
+                           message="Cancelled by user",
+                           error_message="User cancelled download")
+
+        return {"cancelled": True, "job_id": job_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[DOWNLOAD-CANCEL] Error cancelling %s: %s", job_id, e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

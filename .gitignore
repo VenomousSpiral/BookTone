@@ -48,6 +48,11 @@ models.json
 .coverage
 htmlcov/
 
+# SQLite databases (runtime data)
+*.db
+*.db-wal
+*.db-shm
+
 # Build artifacts
 dist/
 build/

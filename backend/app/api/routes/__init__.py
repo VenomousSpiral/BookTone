@@ -8,3 +8,14 @@ from app.api.routes import progress_routes
 from app.api.routes import cache_routes
 from app.api.routes import download_routes
 from app.api.routes import preferences
+
+__all__ = [
+    "files",
+    "openai_routes",
+    "text_routes",
+    "audio_routes",
+    "progress_routes",
+    "cache_routes",
+    "download_routes",
+    "preferences",
+]

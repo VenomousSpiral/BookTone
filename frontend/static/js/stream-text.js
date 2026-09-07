@@ -429,16 +429,19 @@ async function jumpToChunk(chunkIndex) {
 
     _log('[STREAM] Jumping to chunk:', chunkIndex);
 
+    // Signal to error handler that this is a user-initiated stop.
+    state.isUserStopping = true;
+    const wasPlaying = state.isPlaying;
+
     state.audioPlaybackId++;
     const thisPlaybackId = state.audioPlaybackId;
-    const wasPlaying = state.isPlaying;
 
     state.isPlaying = false;
     state.isGeneratingAudio = false;
     updatePlayButton();
 
     const audio = DOM.audio;
-    audio.pause();
+    try { audio.pause(); } catch(e) {}
     audio.currentTime = 0;
 
     state.currentChunk = chunkIndex;
@@ -455,8 +458,11 @@ async function jumpToChunk(chunkIndex) {
     await scrollToCurrentChunk();
     saveProgress();
 
+    // Allow error handlers to resume normal operation.
+    state.isUserStopping = false;
+
     if (wasPlaying && state.audioPlaybackId === thisPlaybackId) {
-        await playNextSegment(true);
+        try { await playNextSegment(true); } catch(e2) {}
     }
 }
 

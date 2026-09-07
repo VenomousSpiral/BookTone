@@ -4,7 +4,6 @@ Input validation utilities for API routes.
 Provides path traversal protection for user-supplied paths.
 """
 from fastapi import HTTPException
-from typing import Optional
 
 from app.utils.path_utils import sanitize_ebook_path
 

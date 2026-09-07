@@ -6,7 +6,6 @@ Endpoints:
     GET  /api/audiobooks/preferences/get - Get user preferences (SQLite)
     POST /api/audiobooks/preferences/save - Save user preferences (SQLite)
 """
-from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 

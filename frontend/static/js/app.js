@@ -144,16 +144,16 @@ function displayModels(models) {
         item.className = 'model-item';
         item.innerHTML = `
             <div class="model-info">
-                <div class="model-name">${model.name}</div>
+                <div class="model-name">${esc(model.name)}</div>
                 <div class="model-meta">
-                    API Model: ${model.api_model || model.name}<br>
-                    Voices: ${model.voices.join(', ')}
-                    ${model.base_url ? `<br>Base URL: ${model.base_url}` : ''}
+                    API Model: ${esc(model.api_model || model.name)}<br>
+                    Voices: ${esc(model.voices.join(', '))}
+                    ${model.base_url ? `<br>Base URL: ${esc(model.base_url)}` : ''}
                 </div>
             </div>
             <div class="model-actions">
-                <button class="btn-small" onclick="showEditModelDialog('${name}')">✏️ Edit</button>
-                <button class="btn-small btn-danger" onclick="deleteModel('${name}')">🗑️ Delete</button>
+                <button class="btn-small" onclick="showEditModelDialog('${escAttr(name)}')">✏️ Edit</button>
+                <button class="btn-small btn-danger" onclick="deleteModel('${escAttr(name)}')">🗑️ Delete</button>
             </div>
         `;
         container.appendChild(item);

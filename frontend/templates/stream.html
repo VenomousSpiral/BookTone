@@ -658,6 +658,15 @@
                     </div>
                 </div>
 
+                <!-- Active Downloads Section (inline, non-blocking) -->
+                <div id="streamActiveDownloadsSection" style="display:none; background: rgba(255,255,255,0.03); border-radius: 8px; padding: 12px; margin-bottom: 15px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <span style="font-weight: bold; font-size: 13px;">📥 Active Downloads</span>
+                        <button type="button" onclick="refreshStreamActiveDownloads()" class="btn" style="padding: 4px 8px; font-size: 11px;">Refresh</button>
+                    </div>
+                    <div id="streamDownloadsContent" style="font-size: 12px;"></div>
+                </div>
+
                 
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">Save Settings</button>
@@ -668,9 +677,10 @@
     </div>
     
     <script>
-        // Pass ebook path from server
-        const EBOOK_PATH = "{{ ebook_path }}";
+        // Pass ebook path from server (JSON-encoded for safe JS-string embedding)
+        const EBOOK_PATH = {{ ebook_path | tojson }};
     </script>
+    <script src="/static/js/util.js"></script>
     <script src="/static/js/theme-manager.js"></script>
     <script src="/static/js/stream-state.js"></script>
     <script src="/static/js/stream-audio.js"></script>

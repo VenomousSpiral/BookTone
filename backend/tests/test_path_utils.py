@@ -49,8 +49,11 @@ class TestSanitizeEbookPath:
         # '..' pops the previous component
         assert sanitize_ebook_path("folder/../secret/file.txt") == "secret/file.txt"
 
-    def test_whitespace_only(self):
-        assert sanitize_ebook_path("   ") == ""
+    def test_whitespace_only_preserved(self):
+        # Whitespace-only paths now preserve the whitespace (no longer stripped)
+        # since boundary characters in directory names can be significant
+        result = sanitize_ebook_path("   ")
+        assert len(result) == 3
 
     def test_empty_string(self):
         assert sanitize_ebook_path("") == ""
@@ -134,3 +137,54 @@ class TestResolveCombinedAudioPath:
         )
 
         assert str(result).endswith("combined.opus")
+
+
+class TestFileManagerPathSafety:
+    """Path traversal protection for FileManager file operations."""
+
+    @staticmethod
+    def _make_manager(tmp_path):
+        from app.services.file_manager import FileManager
+
+        fm = FileManager()
+        fm.base_dir = tmp_path
+        return fm
+
+    def test_safe_path_rejects_parent_traversal(self, tmp_path):
+        fm = self._make_manager(tmp_path)
+        with pytest.raises(ValueError):
+            fm._safe_path("../../outside.txt")
+
+    def test_safe_path_rejects_middle_traversal(self, tmp_path):
+        fm = self._make_manager(tmp_path)
+        with pytest.raises(ValueError):
+            fm._safe_path("folder/../../outside.txt")
+
+    def test_safe_path_accepts_normal_path(self, tmp_path):
+        fm = self._make_manager(tmp_path)
+        p = fm._safe_path("folder/book.epub")
+        assert p.is_relative_to(tmp_path)
+
+    def test_safe_filename_strips_directory(self):
+        from app.services.file_manager import FileManager
+
+        assert FileManager._safe_filename("../../evil.txt") == "evil.txt"
+        assert FileManager._safe_filename("a/b/c.epub") == "c.epub"
+
+    def test_delete_rejects_traversal(self, tmp_path):
+        fm = self._make_manager(tmp_path)
+        (tmp_path / "victim.txt").write_text("keep me")
+        with pytest.raises(ValueError):
+            fm.delete_file("../../victim.txt")
+        assert (tmp_path / "victim.txt").exists()
+
+    def test_move_rejects_traversal_destination(self, tmp_path):
+        fm = self._make_manager(tmp_path)
+        (tmp_path / "a.txt").write_text("a")
+        with pytest.raises(ValueError):
+            fm.move_file("a.txt", "../../outside.txt")
+
+    def test_create_directory_rejects_traversal(self, tmp_path):
+        fm = self._make_manager(tmp_path)
+        with pytest.raises(ValueError):
+            fm.create_directory("../../outside")

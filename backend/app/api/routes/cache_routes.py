@@ -16,7 +16,6 @@ Endpoints:
 """
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
-from fastapi.responses import JSONResponse
 
 from app.models.streaming_models import GenerateCacheRequest
 from app.services.stream_audiobook_service import stream_audiobook_service

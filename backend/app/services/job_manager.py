@@ -1,13 +1,16 @@
-"""
-Persistent job state store for download conversions.
+"""Persistent job state store for download conversions.
 
-Mirrors the DownloadJobManager from test_download_conversion.py, adapted for
-the backend's runtime environment (real storage paths, shared cache base dir).
+Jobs are stored as JSON-per-job files plus an in-memory cache for fast polling.
+All in-memory and on-disk access is guarded by a lock, and files are written
+atomically so readers never observe a partially-written job.
 """
 import json
 import hashlib
 import logging
+import os
 import re
+import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 
@@ -15,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class JobManager:
-    """In-memory + on-disk job state store. Mirrors the plan's JSON-per-job design."""
+    """In-memory + on-disk job state store."""
 
     def __init__(self, jobs_dir: Union[str, Path], cache_base_dir: Optional[Union[str, Path]] = None):
         # Go up 4 levels from job_manager.py (services → app → backend → project root)
@@ -27,9 +30,18 @@ class JobManager:
         self.cache_base_dir = Path(cache_base_dir) if cache_base_dir else default_cache
         # In-memory cache for fast polling lookups
         self._cache: dict[str, dict] = {}
+        self._lock = threading.Lock()
 
     def _job_path(self, job_id: str) -> Path:
         return self.jobs_dir / f"{job_id}.json"
+
+    def _write_job(self, job_id: str, job: dict) -> None:
+        """Atomically persist a job (temp file + rename)."""
+        target = self._job_path(job_id)
+        tmp = target.with_suffix(".json.tmp")
+        with open(tmp, "w") as f:
+            json.dump(job, f, indent=2)
+        os.replace(tmp, target)
 
     @staticmethod
     def make_job_id(ebook_path: str, model_name: str, voice: str, format_type: str) -> str:
@@ -39,36 +51,9 @@ class JobManager:
 
     @staticmethod
     def _find_audio_cache_dir(ebook_stem: str, cache_base_dir: Path) -> Optional[Path]:
-        """Find the exact audio-cache directory for an ebook stem.
-
-        Uses precise matching so that ``Pride_and_Prejudice.epub`` doesn't match
-        the ``(1)`` variant's directory. When multiple dirs match by normalized name,
-        prefers the one with actual audio files (latest version).
-        """
-        norm_ebook = re.sub(r'[^a-z0-9]', '', ebook_stem.lower())
-        candidates: list[tuple[Path, str]] = []
-        for f in sorted(cache_base_dir.glob("_stream_cache_*")):
-            if not f.is_dir(): continue
-            m = re.match(r'^_stream_cache_(.+?)_([a-fA-F0-9]{8,})$', f.name)
-            if not m: continue
-            name_part = m.group(1).strip()
-            norm_base = re.sub(r'[^a-z0-9]', '', name_part.lower())
-            candidates.append((f, norm_base))
-        matches: list[Path] = []
-        for f, nb in sorted(candidates, key=lambda x: (-len(x[1]), str(x[0]))):
-            if norm_ebook == nb or (nb.startswith(norm_ebook) and nb[len(norm_ebook):] == ""):
-                matches.append(f)
-        # Prefer the directory with actual audio files when multiple match
-        if matches:
-            best: Path | None = None
-            best_count = -1
-            for cand in sorted(matches):
-                count = len(list(cand.glob("**/*.opus"))) + len(list(cand.glob("**/*.m4a")))
-                if count > best_count or (count == 0 and best is None):
-                    # Prefer dirs with files; fall back to first match only if all empty
-                    best = cand
-            return best
-        return None
+        """Find the exact audio-cache directory for an ebook stem (shared helper)."""
+        from app.utils.path_utils import find_audio_cache_dir
+        return find_audio_cache_dir(ebook_stem, cache_base_dir)
 
     def create_job(
         self, ebook_path: str, model_name: str, voice: str, format_type: str,
@@ -77,7 +62,6 @@ class JobManager:
         # Check if already done (combined file exists) — skip-if-ready logic
         combined = self._resolve_output(ebook_path, model_name, voice, format_type)
 
-        cache_dir_base = Path(self.cache_base_dir) / "_stream_cache_"
         # Find matching cache dir to count audio files
         cache_voice_files_count = 0
         try:
@@ -112,12 +96,12 @@ class JobManager:
             "output_file": str(combined) if combined.exists() and combined.stat().st_size > 0 else None,
             "audio_files_count": cache_voice_files_count if status == "pending" else 0,
             "error_message": None,
-            "created_at": __import__("time").strftime("%Y-%m-%dT%H:%M:%S"),
+            "created_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
         }
 
-        self._cache[job["job_id"]] = job
-        with open(self._job_path(job["job_id"]), "w") as f:
-            json.dump(job, f, indent=2)
+        with self._lock:
+            self._cache[job["job_id"]] = job
+            self._write_job(job["job_id"], job)
         return dict(job)
 
     def _resolve_output(
@@ -147,88 +131,85 @@ class JobManager:
 
     def get_job(self, job_id: str) -> Optional[dict]:
         """Get a job by ID."""
-        if job_id in self._cache:
-            return dict(self._cache[job_id])
-        jp = self._job_path(job_id)
-        if not jp.exists():
-            return None
-        try:
-            with open(jp) as f:
-                data = json.load(f)
-            self._cache[job_id] = data
-            return dict(data)
-        except (json.JSONDecodeError, OSError):
-            # File might be empty or being written by another thread — retry once
-            import time; time.sleep(0.1)  # brief wait for file write to complete
+        with self._lock:
+            if job_id in self._cache:
+                return dict(self._cache[job_id])
+
+            jp = self._job_path(job_id)
+            if not jp.exists():
+                return None
             try:
                 with open(jp) as f:
                     data = json.load(f)
                 self._cache[job_id] = data
                 return dict(data)
             except (json.JSONDecodeError, OSError):
+                logger.warning("[JOB] Could not read job file %s", job_id)
                 return None
 
     def update_job(self, job_id: str, **fields):
         """Update a job's fields and persist to disk."""
-        if job_id not in self._cache:
-            jp = self._job_path(job_id)
-            if jp.exists():
-                with open(jp) as f:
-                    self._cache[job_id] = json.load(f)
-            else:
-                raise KeyError(f"Job {job_id} not found")
+        with self._lock:
+            if job_id not in self._cache:
+                jp = self._job_path(job_id)
+                if jp.exists():
+                    with open(jp) as f:
+                        self._cache[job_id] = json.load(f)
+                else:
+                    raise KeyError(f"Job {job_id} not found")
 
-        job = self._cache[job_id]
-        for k, v in fields.items():
-            if k in ("status", "progress_pct", "message",
-                     "output_file", "error_message"):
-                job[k] = v
-        with open(self._job_path(job_id), "w") as f:
-            json.dump(job, f, indent=2)
+            job = self._cache[job_id]
+            for k, v in fields.items():
+                if k in ("status", "progress_pct", "message",
+                         "output_file", "error_message"):
+                    job[k] = v
+            self._write_job(job_id, job)
 
     def get_or_create(
         self, ebook_path: str, model_name: str, voice: str, format_type: str,
     ) -> dict:
         """Get existing job or create a new one.
-        
+
         If an existing ready job's output file no longer exists on disk
         (e.g. after cleanup), treat it as needing re-conversion.
         """
         raw = f"{ebook_path}:{model_name}:{voice}:{format_type}"
         job_id = hashlib.md5(raw.encode()).hexdigest()[:16]
 
-        if self._cache.get(job_id) and self._cache[job_id]["job_id"] == job_id:
-            cached_job = dict(self._cache[job_id])
-            # If ready, verify output actually exists on disk
-            if (cached_job.get("status") == "ready"
-                    and cached_job.get("output_file") 
-                    and not Path(cached_job["output_file"]).exists()):
-                # Output missing — remove stale job so it gets recreated below
-                del self._cache[job_id]
-            else:
-                return cached_job
-        # Check disk too
-        jp = self._job_path(job_id)
-        if jp.exists():
-            with open(jp) as f:
-                existing = json.load(f)
-            if existing.get("format_type") == format_type and \
-               existing.get("status") in ("ready", "failed"):
+        with self._lock:
+            if self._cache.get(job_id) and self._cache[job_id]["job_id"] == job_id:
+                cached_job = dict(self._cache[job_id])
                 # If ready, verify output actually exists on disk
-                out_file = existing.get("output_file")
-                if not out_file or not Path(out_file).exists():
-                    # Output missing — don't return stale job, fall through to recreate
-                    pass
+                if (cached_job.get("status") == "ready"
+                        and cached_job.get("output_file")
+                        and not Path(cached_job["output_file"]).exists()):
+                    # Output missing — remove stale job so it gets recreated below
+                    del self._cache[job_id]
                 else:
-                    self._cache[job_id] = existing
-                    return dict(existing)
+                    return cached_job
 
-        # Check all cached jobs for matching params (different formats share same base ID but we store format in the key now)
+            # Check disk too
+            jp = self._job_path(job_id)
+            if jp.exists():
+                with open(jp) as f:
+                    existing = json.load(f)
+                if existing.get("format_type") == format_type and \
+                   existing.get("status") in ("ready", "failed"):
+                    # If ready, verify output actually exists on disk
+                    out_file = existing.get("output_file")
+                    if not out_file or not Path(out_file).exists():
+                        # Output missing — don't return stale job, fall through to recreate
+                        pass
+                    else:
+                        self._cache[job_id] = existing
+                        return dict(existing)
+
         return self.create_job(ebook_path, model_name, voice, format_type)
 
 
 # Module-level singleton — created on first import (go up 4 levels from services/)
 DEFAULT_JOBS_DIR = Path(__file__).resolve().parent.parent.parent.parent / "storage" / "download_jobs"
+
 
 def _get_default_manager() -> JobManager:
     """Get the default job manager instance (creates if needed)."""

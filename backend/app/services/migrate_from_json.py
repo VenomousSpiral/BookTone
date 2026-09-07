@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from app.core.config import settings
-from app.services.database import get_connection, DB_PATH
+from app.services.database import get_connection
 
 logger = logging.getLogger(__name__)
 

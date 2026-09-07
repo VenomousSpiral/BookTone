@@ -60,9 +60,12 @@ def _setup_temp_storage(storage_dir):
 
 
 def _reset_stream_progress_schema():
-    """Reset StreamService._progress_schema_created flag for test isolation."""
-    from app.services.stream_service import StreamService as SS
-    SS._progress_schema_created = False
+    """No-op retained for legacy test call sites.
+
+    The schema flag was removed; ProgressRepository now ensures the schema
+    idempotently on every operation, so no per-test reset is needed.
+    """
+    return None
 
 
 class TestMigrationScript:

@@ -6,7 +6,7 @@ and deletion of cached audio files.
 Extracted from stream_service.py to reduce its size.
 """
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 import logging
 import shutil
 
@@ -14,7 +14,6 @@ from app.core.config import settings
 from app.utils.path_utils import (
     resolve_cache_dir,
     resolve_base_cache_dir,
-    safe_stem,
 )
 
 logger = logging.getLogger(__name__)

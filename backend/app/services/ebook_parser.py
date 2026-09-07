@@ -70,8 +70,6 @@ class EbookParser:
 
         return "Chapter"
     
-    SUPPORTED_FORMATS = ['.epub', '.txt', '.html', '.pdf']
-    
     def __init__(self):
         self._image_cache = {}  # Cache for extracted images {ebook_path: {image_id: base64_data}}
         self._parse_cache = {}  # In-memory cache {cache_key: {mtime, data}}
@@ -703,29 +701,47 @@ class EbookParser:
             clean_chapter_text_raw = marker_pattern.sub('', chapter_text_with_markers)
             clean_chapter_text = re.sub(r' +', ' ', clean_chapter_text_raw).strip()
 
+            # Calculate normalized positions by iterating through RAW text.
+            # Key fix: only count a space as separator (not leading whitespace)
+            # when the next non-space content after this position leads to actual
+            # text, not directly into an IMAGE marker. This prevents off-by-one
+            # errors where trailing spaces before markers are counted but then 
+            # stripped by .strip() from clean_chapter_text.
             image_positions = []
-            normalized_clean_pos = 0
+            ncp = 0
             marked_pos = 0
             last_was_space = False
 
             while marked_pos < len(chapter_text_with_markers):
-                marker_match = marker_pattern.match(chapter_text_with_markers[marked_pos:])
-                if marker_match:
+                remaining = chapter_text_with_markers[marked_pos:]
+                is_marker_start = remaining.startswith('<<<IMAGE_')
+
+                if not is_marker_start:
+                    char = remaining[0] if remaining else ''
+                    is_space = char == ' '
+
+                    if not is_space:
+                        ncp += 1
+                        last_was_space = False
+                    elif not last_was_space and ncp > 0:
+                        # Check: does the next non-space content after this space 
+                        # lead to actual text (not directly into an IMAGE marker)?
+                        rest_after_spaces = remaining.lstrip()
+                        if rest_after_spaces.startswith('<<<IMAGE_'):
+                            # Trailing space before a marker - don't count as separator
+                            pass
+                        else:
+                            ncp += 1  # Count as content separator
+                    last_was_space = is_space
+                
+                if is_marker_start:
+                    marker_match = marker_pattern.match(remaining)
                     for marker_info in image_markers:
                         if marker_info['marker'] == marker_match.group():
-                            image_positions.append((normalized_clean_pos, marker_info))
+                            image_positions.append((ncp, marker_info))
                             break
                     marked_pos += len(marker_match.group())
                 else:
-                    char = chapter_text_with_markers[marked_pos]
-                    is_space = char == ' '
-                    if is_space:
-                        if not last_was_space and normalized_clean_pos > 0:
-                            normalized_clean_pos += 1
-                        last_was_space = True
-                    else:
-                        normalized_clean_pos += 1
-                        last_was_space = False
                     marked_pos += 1
 
             text_chunks = self.chunk_text(clean_chapter_text, 4096)

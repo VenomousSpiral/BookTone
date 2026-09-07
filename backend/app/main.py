@@ -1,7 +1,6 @@
 """
 FastAPI application entry point.
 """
-import atexit
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Query
 from fastapi.staticfiles import StaticFiles
@@ -21,8 +20,7 @@ from app.api.routes import (
     download_routes,
     preferences,
 )
-from app.utils.path_utils import sanitize_ebook_path
-from app.services.database import init_db, get_connection
+from app.services.database import init_db
 from app.services.migrate_from_json import migrate_if_needed
 
 # --------------------------------------------------------------------------- #

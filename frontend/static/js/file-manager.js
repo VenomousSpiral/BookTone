@@ -126,7 +126,7 @@ function createFileItem(file) {
     }
 
     fileInfo.innerHTML = `
-        <div class="file-name">${icon} ${file.name}</div>
+        <div class="file-name">${icon} ${esc(file.name)}</div>
         <div class="file-meta">${size} ${size && date ? '\u2022' : ''} ${date}</div>
     `;
 
@@ -173,7 +173,7 @@ function openFileSettingsPanel(file) {
         <div class="modal-content" style="max-width: 800px; width: 95%; max-height: 90vh; overflow-y: auto; margin: auto;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--border-color);">
                 <div style="min-width: 0; /* allow title to shrink below content width */">
-                    <h2 style="margin: 0 0 5px 0; font-size: 24px; overflow-wrap: break-word;">${isEbook ? '\uD83C\uDFB5' : '\uD83D\uDCC1'} ${bookTitle}</h2>
+                    <h2 style="margin: 0 0 5px 0; font-size: 24px; overflow-wrap: break-word;">${isEbook ? '\uD83C\uDFB5' : '\uD83D\uDCC1'} ${esc(bookTitle)}</h2>
                     <p style="margin: 0; color: var(--text-secondary); font-size: 14px;">${file.is_directory ? 'Folder' : 'File'} \u00B7 ${file.is_directory ? '' : formatBytes(file.size)}</p>
                 </div>
                 <button onclick="closeFileSettingsPanel()" style="background: none; border: none; font-size: 28px; cursor: pointer; color: var(--text-secondary); padding: 5px 10px;">\u2715</button>
@@ -181,21 +181,29 @@ function openFileSettingsPanel(file) {
 
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 25px;">
                 ${!file.is_directory ? `
-                    <button onclick="downloadFile('${file.path}'); closeFileSettingsPanel();" class="btn" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                    <button onclick="downloadFile('${escAttr(file.path)}'); closeFileSettingsPanel();" class="btn" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
                         <span style="font-size: 24px;">\u2B07\uFE0F</span><span>Download</span>
                     </button>
                 ` : ''}
                 ${isEbook ? `
-                    <button onclick="showGenerateCacheModal('${file.path}')" class="btn btn-primary" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                    <button onclick="showGenerateCacheModal('${escAttr(file.path)}')" class="btn btn-primary" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
                         <span style="font-size: 24px;">\uD83C\uDFB5</span><span>Generate Audiobook</span>
                     </button>
                 ` : ''}
-                <button onclick="showMoveMenu('${file.path}', ${file.is_directory}); closeFileSettingsPanel();" class="btn" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                <button onclick="showMoveMenu('${escAttr(file.path)}', ${file.is_directory}); closeFileSettingsPanel();" class="btn" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
                     <span style="font-size: 24px;">\u2194\uFE0F</span><span>Move</span>
                 </button>
-                <button onclick="deleteFile('${file.path}', ${file.is_directory}); closeFileSettingsPanel();" class="btn btn-danger" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+                <button onclick="deleteFile('${escAttr(file.path)}', ${file.is_directory}); closeFileSettingsPanel();" class="btn btn-danger" style="padding: 15px; font-size: 14px; display: flex; flex-direction: column; align-items: center; gap: 5px;">
                     <span style="font-size: 24px;">\uD83D\uDDD1\uFE0F</span><span>Delete</span>
                 </button>
+            </div>
+
+            <!-- Active Downloads Section (inline, non-blocking) -->
+            <div id="activeDownloadsSection" style="display:none;">
+                <h3 style="margin: 0 0 15px 0; font-size: 18px;">\uD83D\udce5 Active Downloads</h3>
+                <div id="downloadsContent" style="padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px; overflow-wrap: break-word; word-break: break-all;">
+                    <div style="text-align: center; padding: 20px; color: var(--text-secondary);">Loading download status...</div>
+                </div>
             </div>
 
             ${isEbook ? `
@@ -212,15 +220,24 @@ function openFileSettingsPanel(file) {
     panel.style.display = 'flex';
     panel.classList.add('active');
 
+    // Load active downloads for this ebook
+    loadAndRenderDownloads(file.path);
+
     if (isEbook) {
         loadAndRenderAudiobookStatus(file.path);
     }
 }
 
 function closeFileSettingsPanel() {
+    // Clear audiobook cache polling
     if (fileState.pollInterval) {
         clearInterval(fileState.pollInterval);
         fileState.pollInterval = null;
+    }
+    // Clear active downloads polling
+    if (activeDownloadsPollInterval) {
+        clearInterval(activeDownloadsPollInterval);
+        activeDownloadsPollInterval = null;
     }
     fileState.activeEbookPath = null;
 
@@ -246,7 +263,7 @@ function loadAndRenderAudiobookStatus(ebookPath) {
                     <div style="text-align: center; padding: 20px;">
                         <p style="color: var(--text-secondary); margin-bottom: 15px;">No audiobook cache found for this ebook</p>
                         <p style="color: var(--text-secondary); margin-bottom: 15px; font-size: 13px;">${info?.total_chunks || '?'} chunks available for generation</p>
-                        <button class="btn btn-primary" style="padding: 10px 20px;" onclick="showGenerateCacheModal('${ebookPath}')">
+                        <button class="btn btn-primary" style="padding: 10px 20px;" onclick="showGenerateCacheModal('${escAttr(ebookPath)}')">
                             \uD83C\uDFB5 Generate Audiobook
                         </button>
                     </div>
@@ -257,7 +274,7 @@ function loadAndRenderAudiobookStatus(ebookPath) {
             let html = '';
             const totalCacheSize = info.caches.reduce((sum, c) => sum + c.size_mb, 0);
             html += `
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 13px; color: var(--text-secondary);"><span style="min-width: 0; overflow-wrap: break-word;">\uD83D\udcDA ${info.title}</span>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; font-size: 13px; color: var(--text-secondary);"><span style="min-width: 0; overflow-wrap: break-word;">\uD83D\udcDA ${esc(info.title)}</span>
                     <span>${info.total_chunks} chunks \u00B7 ${totalCacheSize.toFixed(1)} MB total</span>
                 </div>
             `;
@@ -290,30 +307,30 @@ function loadAndRenderAudiobookStatus(ebookPath) {
                 let actionButtons = '';
                 if (cache.status === 'completed') {
                     actionButtons += `
-                        <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="showDownloadFormatModal('${ebookPath}', '${cache.model}', '${cache.voice}')">\u2B07\uFE0F Download...</button>
-                        <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheRegenerate('${ebookPath}', '${cache.model}', '${cache.voice}')">\uD83D\uDD04 Regenerate</button>
+                        <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="showDownloadFormatModal('${escAttr(ebookPath)}', '${escAttr(cache.model)}', '${escAttr(cache.voice)}')">\u2B07\uFE0F Download...</button>
+                        <button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheRegenerate('${escAttr(ebookPath)}', '${escAttr(cache.model)}', '${escAttr(cache.voice)}')">\uD83D\uDD04 Regenerate</button>
                     `;
                 } else if (cache.status === 'in_progress') {
-                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCachePause('${ebookPath}', '${cache.model}', '${cache.voice}')">\u23F8\uFE0F Pause</button>`;
+                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCachePause('${escAttr(ebookPath)}', '${escAttr(cache.model)}', '${escAttr(cache.voice)}')">\u23F8\uFE0F Pause</button>`;
                 } else if (cache.status === 'paused' || cache.status === 'failed') {
-                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheResume('${ebookPath}', '${cache.model}', '${cache.voice}')">\u25B6\uFE0F Resume Generation</button>`;
+                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheResume('${escAttr(ebookPath)}', '${escAttr(cache.model)}', '${escAttr(cache.voice)}')">\u25B6\uFE0F Resume Generation</button>`;
                 } else if (cache.status === 'not_started') {
-                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheResume('${ebookPath}', '${cache.model}', '${cache.voice}')">\u25B6\uFE0F Resume Generation</button>`;
+                    actionButtons += `<button class="btn" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheResume('${escAttr(ebookPath)}', '${escAttr(cache.model)}', '${escAttr(cache.voice)}')">\u25B6\uFE0F Resume Generation</button>`;
                 }
 
                 if (cache.error) {
-                    actionButtons += `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(244, 67, 54, 0.1); border-radius: 4px; font-size: 11px; color: #f44;">⚠️ ${cache.error}</div>`;
+                    actionButtons += `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(244, 67, 54, 0.1); border-radius: 4px; font-size: 11px; color: #f44;">⚠️ ${esc(cache.error)}</div>`;
                 }
 
-                actionButtons += `<button class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheDelete('${ebookPath}', '${cache.model}', '${cache.voice}')">\uD83D\uDDD1\uFE0F Delete Cache</button>`;
+                actionButtons += `<button class="btn btn-danger" style="padding: 6px 12px; font-size: 12px;" onclick="handleCacheDelete('${escAttr(ebookPath)}', '${escAttr(cache.model)}', '${escAttr(cache.voice)}')">\uD83D\uDDD1\uFE0F Delete Cache</button>`;
 
 
 
                 html += `
                     <div style="margin-bottom: 15px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 8px; border-left: 3px solid ${cache.status === 'completed' ? '#66bb6a' : cache.status === 'in_progress' ? '#4fc3f7' : '#f44'};">
                         <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;"><div style="min-width: 0;">
-                                <span style="font-size: 16px; font-weight: bold;">${statusIcon} ${cache.model}</span>
-                                <span style="color: var(--text-secondary); margin-left: 8px;">/ ${cache.voice}</span>
+                                <span style="font-size: 16px; font-weight: bold;">${statusIcon} ${esc(cache.model)}</span>
+                                <span style="color: var(--text-secondary); margin-left: 8px;">/ ${esc(cache.voice)}</span>
                             </div>
                             <span style="font-size: 12px; color: var(--text-secondary);">${cache.size_mb} MB</span>
                         </div>
@@ -325,7 +342,7 @@ function loadAndRenderAudiobookStatus(ebookPath) {
 
             html += `
                 <div style="text-align: center; margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1);">
-                    <button class="btn btn-primary" style="padding: 10px 20px;" onclick="showGenerateCacheModal('${ebookPath}')">
+                    <button class="btn btn-primary" style="padding: 10px 20px;" onclick="showGenerateCacheModal('${escAttr(ebookPath)}')">
                         \u2795 Generate New Audiobook
                     </button>
                 </div>
@@ -370,7 +387,7 @@ function showGenerateCacheModal(ebookPath) {
     modal.innerHTML = `
         <div class="modal-content" style="max-width: 500px; overflow-x: hidden; box-sizing: border-box;">
             <h2>\uD83C\uDFB5 Generate Audiobook</h2>
-            <p style="margin-bottom: 15px; color: var(--text-secondary); word-break: break-all;">${ebookPath}</p>
+            <p style="margin-bottom: 15px; color: var(--text-secondary); word-break: break-all;">${esc(ebookPath)}</p>
 
             <label for="genCacheModel">Model:</label>
             <select id="genCacheModel" required onchange="updateGenCacheVoices()" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
@@ -386,7 +403,7 @@ function showGenerateCacheModal(ebookPath) {
             <textarea id="genCacheInstructions" rows="3" placeholder="e.g., Speak in a cheerful tone." style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; font-size: inherit; resize: vertical;"></textarea>
 
             <div class="modal-buttons">
-                <button type="button" onclick="handleCacheGenerate('${ebookPath}')" class="btn btn-primary">\uD83C\uDFB5 Generate</button>
+                <button type="button" onclick="handleCacheGenerate('${escAttr(ebookPath)}')" class="btn btn-primary">\uD83C\uDFB5 Generate</button>
                 <button type="button" onclick="closeGenerateCacheModal()" class="btn">Cancel</button>
             </div>
         </div>
@@ -534,6 +551,111 @@ async function handleCacheResume(ebookPath, model, voice) {
     }
 }
 
+// ========== ACTIVE DOWNLOADS SECTION (inline, non-blocking progress tracking) ==========
+
+let activeDownloadsPollInterval = null;  // Interval ID for polling download progress across all ebooks
+
+/**
+ * Load and render the "Active Downloads" section in the file settings panel.
+ * Shows real-time progress bars for any downloads that are currently converting,
+ * filtered by the current ebook path. If no active downloads exist, hides the section.
+ */
+function loadAndRenderDownloads(ebookPath) {
+    const sectionEl = document.getElementById('activeDownloadsSection');
+    const contentEl = document.getElementById('downloadsContent');
+    if (!sectionEl || !contentEl) return;
+
+    fetch(`${API_BASE}/stream/active-downloads`)
+        .then(r => r.json())
+        .then(data => {
+            // Filter to only show downloads for this specific ebook
+            const relevantJobs = (data.jobs || []).filter(
+                j => j.ebook_path === ebookPath && 
+                     ['pending', 'converting'].includes(j.status)
+            );
+
+            if (relevantJobs.length === 0) {
+                // Check if there are any completed downloads for this file that haven't been downloaded yet
+                const readyForDownload = (data.jobs || []).filter(
+                    j => j.ebook_path === ebookPath && j.status === 'ready' && !j._downloaded
+                );
+
+                sectionEl.style.display = 'none';
+                return;
+            }
+
+            // Show the section and render each active download as an inline progress card
+            sectionEl.style.display = 'block';
+            let html = '';
+
+            relevantJobs.forEach(job => {
+                const pct = job.progress_pct || 0;
+                const icon = job.status === 'pending' ? '\u23F8\uFE0F' : '\uD83D\uDD25';
+                
+                html += `
+                    <div style="margin-bottom: 12px; padding: 14px; background: rgba(255,255,255,0.03); border-radius: 8px; border-left: 3px solid #ff950a;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                            <span style="font-weight: bold; font-size: 14px;">${icon} ${job.format_type.toUpperCase()}</span>
+                            <button onclick="cancelDownload('${escAttr(job.job_id)}')" class="btn btn-danger" 
+                                    style="padding: 4px 10px; font-size: 12px;" title="Cancel download">\u2715 Cancel</button>
+                        </div>
+                        
+                        <!-- Progress bar -->
+                        <div style="background: var(--bg-tertiary); border-radius: 4px; height: 8px; overflow: hidden; margin-bottom: 6px;">
+                            <div id="_fm_prog_${esc(job.job_id)}" 
+                                 style="height: 100%; width: ${pct}%; background: linear-gradient(90deg, #ff950a, #ff6b00); transition: width 0.3s;"></div>
+                        </div>
+                        
+                        <!-- Status info -->
+                        <div style="display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary);">
+                            <span id="_fm_msg_${esc(job.job_id)}">${esc(job.message || 'Starting...')}</span>
+                            <span>${pct}%</span>
+                        </div>
+                        
+                        <!-- Model/voice info -->
+                        <div style="margin-top: 6px; font-size: 12px; color: var(--text-secondary);">
+                            ${esc(job.model_name)} / ${esc(job.voice)} \u00B7 ${job.audio_files_count || '?'} audio files
+                        </div>
+                    </div>
+                `;
+            });
+
+            contentEl.innerHTML = html;
+
+            // Start polling for progress updates (every 1.5 seconds)
+            if (activeDownloadsPollInterval) clearInterval(activeDownloadsPollInterval);
+            fileState.activeEbookPath = ebookPath;  // Track which ebook we're watching
+            activeDownloadsPollInterval = setInterval(() => loadAndRenderDownloads(ebookPath), 1500);
+        })
+        .catch(err => {
+            console.error('[DOWNLOADS] Failed to load:', err);
+            contentEl.innerHTML = '<div style="text-align: center; padding: 20px; color: #f44;">Failed to load download status</div>';
+            sectionEl.style.display = 'block';
+        });
+}
+
+/**
+ * Cancel an active download by job ID.
+ */
+async function cancelDownload(jobId) {
+    try {
+        const res = await fetch(`${API_BASE}/stream/download-cancel/${jobId}`, { method: 'POST' });
+        if (!res.ok) throw new Error('Failed to cancel');
+
+        showToast('Download cancelled');
+        
+        // Stop polling and re-render (will hide section since job is now failed)
+        if (activeDownloadsPollInterval) {
+            clearInterval(activeDownloadsPollInterval);
+            activeDownloadsPollInterval = null;
+        }
+        loadAndRenderDownloads(fileState.activeEbookPath || fileState.current);
+    } catch (error) {
+        console.error('[CANCEL] Error:', error);
+        showToast('Failed to cancel download', true);
+    }
+}
+
 // ========== FILE OPERATIONS ==========
 
 async function deleteFile(filePath, isDirectory) {
@@ -659,7 +781,7 @@ async function renderMoveNav() {
             dirs.forEach(dir => {
                 const item = document.createElement('div');
                 item.className = 'file-item';
-                item.innerHTML = `<div class="file-info"><div class="file-name">\uD83D\uDCC1 ${dir.name}</div></div>`;
+                item.innerHTML = `<div class="file-info"><div class="file-name">\uD83D\uDCC1 ${esc(dir.name)}</div></div>`;
                 item.onclick = () => {
                     fileState.moveMenu.dest = dir.path;
                     renderMoveNav();
@@ -803,14 +925,14 @@ function showDuplicatePopupMenu(file, dupCheck) {
             const totalCache = (dup.parse_cache_size_mb + dup.stream_cache_size_mb).toFixed(1);
             const isGenerating = dup.generation_status === 'in_progress';
             const genWarning = isGenerating
-                ? `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(255, 152, 0, 0.15); border-radius: 4px; font-size: 12px; color: #ffb74d;">⚠️ Audiobook generation in progress (${dup.generation_info?.model || 'unknown'}/${dup.generation_info?.voice || 'unknown'}). Replacing may interrupt it.</div>`
+                ? `<div style="margin-top: 8px; padding: 6px 10px; background: rgba(255, 152, 0, 0.15); border-radius: 4px; font-size: 12px; color: #ffb74d;">⚠️ Audiobook generation in progress (${esc(dup.generation_info?.model || 'unknown')}/${esc(dup.generation_info?.voice || 'unknown')}). Replacing may interrupt it.</div>`
                 : '';
 
             rowsHtml += `
                 <div style="margin-bottom: 12px; padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.08);">
-                    <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">📄 ${dup.filename}</div>
+                    <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">📄 ${esc(dup.filename)}</div>
                     <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
-                        ${formatBytes(dup.size)} · Path: ${dup.path}
+                        ${formatBytes(dup.size)} · Path: ${esc(dup.path)}
                         ${dup.stream_cache_count > 0 ? ` · 🎵 ${dup.stream_cache_count} audiobook cache${dup.stream_cache_count > 1 ? 'es' : ''} · ${dup.stream_cache_size_mb.toFixed(1)} MB` : ''}
                         ${dup.parse_cache_size_mb > 0 ? ` · 📖 Parse cache: ${dup.parse_cache_size_mb.toFixed(1)} MB` : ''}
                     </div>
@@ -826,7 +948,7 @@ function showDuplicatePopupMenu(file, dupCheck) {
 
         menu.innerHTML = `
             <div style="max-width: 520px; width: 95%; margin: auto; padding: 24px; background: var(--bg-primary); border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
-                <h3 style="margin: 0 0 16px 0; font-size: 18px;">📚 Uploading: ${file.name}</h3>
+                <h3 style="margin: 0 0 16px 0; font-size: 18px;">📚 Uploading: ${esc(file.name)}</h3>
                 <p style="margin: 0 0 16px; color: var(--text-secondary); font-size: 14px;">Found existing file(s) with the same name:</p>
                 <div id="duplicateRows">${rowsHtml}</div>
                 <div style="display: flex; gap: 10px; margin-top: 20px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1); justify-content: flex-end;">
@@ -1069,8 +1191,7 @@ async function startFormatConversion(formatType) {
     closeFormatMenu();
     
     showToast(`Starting ${formatType.toUpperCase()} download...`);
-    showDownloadProgressOverlay(formatType);
-    
+    // No longer show blocking overlay — active downloads section handles inline progress
     try {
         // 1. Start the job
         const res = await fetch(`${API_BASE}/stream/download-start?ebook_path=${encodeURIComponent(params.ebookPath)}&model=${params.model}&voice=${params.voice}&format_type=${formatType}`, { method: 'POST' });
@@ -1078,10 +1199,20 @@ async function startFormatConversion(formatType) {
         if (!res.ok) throw new Error('Failed to start download');  
         const job = await res.json();
 
-        // 2. Start polling for progress updates (every second during conversion)
-        pollDownloadProgress(job.job_id, params.ebookPath);
+        // 2. If the settings panel is currently open, immediately refresh and poll for updates.
+        //    Otherwise poll silently in background.
+        if (document.getElementById('activeDownloadsSection')?.style.display !== 'none' || document.getElementById('fileSettingsPanel')) {
+            // Panel is open — immediate render attempt
+            loadAndRenderDownloads(params.ebookPath);
+            
+            // Backend may not have registered the job yet (daemon thread starts async).
+            // Retry once after a short delay to catch it.
+            setTimeout(() => { loadAndRenderDownloads(params.ebookPath); }, 800);
+        } else {
+            // Panel closed — poll silently for progress updates
+            pollDownloadProgressSilent(job.job_id, params.ebookPath);
+        }
     } catch (error) {
-        hideDownloadProgressOverlay();
         showToast('Error: ' + error.message, true);
         console.error('[DOWNLOAD] Error starting download:', error);
     }
@@ -1195,6 +1326,59 @@ function pollDownloadProgress(jobId, ebookPath) {
     downloadPollInterval = setInterval(poll, 1000);  // Poll every second during conversion
 }
 
+/**
+ * Silent polling for downloads when settings panel is closed.
+ * Does NOT show/hide any overlay — just polls and notifies on completion via toast.
+ */
+let silentDownloadJobId = null;
+function pollDownloadProgressSilent(jobId, ebookPath) {
+    if (silentDownloadJobId === jobId) return;  // Already polling this job
+    silentDownloadJobId = jobId;
+    
+    const poll = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/stream/download-progress/${jobId}`);
+            if (!res.ok) throw new Error('Failed to get progress');
+            
+            const job = await res.json();
+            
+            // Check if settings panel is now open — switch to inline updates
+            const panelOpen = document.getElementById('activeDownloadsSection')?.style.display !== 'none';
+            if (panelOpen) {
+                clearInterval(downloadPollInterval);
+                downloadPollInterval = null;
+                silentDownloadJobId = null;
+                // loadAndRenderDownloads will pick up this job from active-downloads endpoint
+                return;
+            }
+            
+            // Completed or failed — stop polling, handle result
+            if (job.status === 'ready') {
+                clearInterval(downloadPollInterval);
+                downloadPollInterval = null;
+                silentDownloadJobId = null;
+                showToast(`Download ready! Starting download as .${job.format_type}`);
+                setTimeout(() => { try { downloadByJobId(job.job_id); } catch(e) {
+                    console.error('[DOWNLOAD] Download failed:', e);
+                    window.open(`${API_BASE}/stream/download/${job.job_id}`, '_blank');
+                }}, 500);
+            } else if (job.status === 'failed') {
+                clearInterval(downloadPollInterval);
+                downloadPollInterval = null;
+                silentDownloadJobId = null;
+                const errorMsg = job.error_message || 'Conversion failed';
+                showToast(`Conversion failed: ${errorMsg}`, true);
+            }
+        } catch (error) {
+            if (!downloadPollInterval && silentDownloadJobId !== jobId) return;
+            console.error('[PROGRESS POLL SILENT] Error:', error);
+        }
+    };
+    
+    poll();
+    downloadPollInterval = setInterval(poll, 1000);
+}
+
 /** Download the completed file by job ID */
 async function downloadByJobId(jobId) {
     const url = `${API_BASE}/stream/download/${jobId}`;  
@@ -1227,6 +1411,8 @@ window.handleCacheResume = handleCacheResume;
 window.showDownloadFormatModal = showDownloadFormatModal;
 window.closeFormatMenu = closeFormatMenu;
 window.startFormatConversion = startFormatConversion;
+window.cancelDownload = cancelDownload;
+window.loadAndRenderDownloads = loadAndRenderDownloads;
 window.downloadByJobId = downloadByJobId;
 
 // Bind form submit

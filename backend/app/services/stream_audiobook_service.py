@@ -6,11 +6,9 @@ Each profile = {ebook_path}:{model}:{voice} combo with independent progress trac
 Uses extracted GenerationQueue and ProfileManager for separation of concerns.
 """
 import asyncio
-import json
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from typing import Optional, Tuple
 
 from app.services.ebook_parser import EbookParser
 from app.services.stream_service import StreamService
@@ -49,22 +47,23 @@ class StreamAudiobookService:
     def pause_generation(self, ebook_path: str, model: str, voice: str) -> dict:
         """Pause current generation - cancels the running task."""
         key = f"{ebook_path}:{model}:{voice}"
-        self.queue._per_item_paused[key] = True
+        self.queue.set_item_paused(key, True)
 
+        current = self.queue.get_current_tuple()
         if (
-            self.queue.current
-            and self.queue.current[0] == ebook_path
-            and self.queue.current[1] == model
-            and self.queue.current[2] == voice
+            current
+            and current[0] == ebook_path
+            and current[1] == model
+            and current[2] == voice
         ):
-            task = self.queue.current[3]
+            task = current[3]
             if task and not task.done():
                 logger.info(
                     "[QUEUE] Cancelling task for %s/%s/%s",
                     ebook_path, model, voice,
                 )
                 task.cancel()
-            self.queue.current = None
+            self.queue.clear_current()
 
         self.profile_manager.update_profile_status(
             ebook_path, model, voice, "paused"
@@ -84,7 +83,7 @@ class StreamAudiobookService:
     ) -> dict:
         """Resume current generation or start next in queue."""
         key = f"{ebook_path}:{model}:{voice}"
-        self.queue._per_item_paused.pop(key, None)
+        self.queue.set_item_paused(key, False)
 
         if not self.profile_manager.get_profile(ebook_path, model, voice):
             self.create_profile(ebook_path, model, voice)
@@ -187,12 +186,13 @@ class StreamAudiobookService:
                     )
 
                     mv_key = f"{ebook_path}:{model_name}:{voice_name}"
-                    is_queue_paused = self.queue._per_item_paused.get(mv_key, False)
+                    is_queue_paused = self.queue.get_item_paused(mv_key)
+                    current = self.queue.get_current_tuple()
                     is_queue_current = (
-                        self.queue.current
-                        and self.queue.current[0] == ebook_path
-                        and self.queue.current[1] == model_name
-                        and self.queue.current[2] == voice_name
+                        current
+                        and current[0] == ebook_path
+                        and current[1] == model_name
+                        and current[2] == voice_name
                     )
 
                     if is_complete:
@@ -289,7 +289,7 @@ class StreamAudiobookService:
             )
             self.queue.enqueue(ebook_path, model, voice)
 
-            if len(self.queue.queue) == 1 and not self.queue.current:
+            if self.queue.get_queue_length() == 1 and not self.queue.get_current_tuple():
                 self._start_next_in_queue(background_tasks)
 
             profile = self.profile_manager.get_profile(ebook_path, model, voice)
@@ -349,7 +349,7 @@ class StreamAudiobookService:
 
                 completed = 0
                 for i in range(total_chunks):
-                    if self.queue._per_item_paused.get(key, False):
+                    if self.queue.get_item_paused(key):
                         logger.info(
                             "[QUEUE] Paused at chunk %d/%d", i, total_chunks
                         )
@@ -357,7 +357,7 @@ class StreamAudiobookService:
                             ebook_path, model, voice,
                             "paused", completed_chunks=completed,
                         )
-                        self.queue.current = None
+                        self.queue.clear_current()
                         return
 
                     chunk = ebook_data["chunks"][i]
@@ -410,7 +410,7 @@ class StreamAudiobookService:
                             completed_chunks=completed,
                             error=str(chunk_err),
                         )
-                        self.queue.current = None
+                        self.queue.clear_current()
                         return
 
                 self.profile_manager.update_profile_status(
@@ -436,13 +436,13 @@ class StreamAudiobookService:
                     ebook_path, model, voice, "failed", error=str(e)
                 )
             finally:
-                self.queue.current = None
-                if not self.queue.paused and self.queue.queue:
+                self.queue.clear_current()
+                if not self.queue.get_paused() and self.queue.get_queue_length() > 0:
                     self._start_next_in_queue(background_tasks)
 
         loop = asyncio.get_event_loop()
         task = loop.create_task(_generation_task())
-        self.queue.current = (ebook_path, model, voice, task)
+        self.queue.set_current((ebook_path, model, voice, task))
         logger.info(
             "[QUEUE] Task created and stored: %s/%s/%s",
             ebook_path, model, voice,
@@ -479,8 +479,8 @@ class StreamAudiobookService:
 
     def clear_queue(self):
         self.queue.clear()
-        self.queue.paused = False
-        self.queue.current = None
+        self.queue.set_paused(False)
+        self.queue.clear_current()
         return {"message": "Queue cleared"}
 
 

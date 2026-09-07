@@ -11,8 +11,7 @@ from pathlib import Path
 from typing import Dict
 import sqlite3 as _sqlite3
 
-from app.core.config import settings
-from app.services.database import get_connection, DB_PATH
+from app.services.database import DB_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +89,6 @@ class SettingsService:
 
     def _get_conn(self):
         """Get a fresh per-operation connection, auto-creating tables."""
-        import os as _os
         # Ensure parent dir exists.
         _db = Path(str(self.db_path))
         _db.parent.mkdir(parents=True, exist_ok=True)

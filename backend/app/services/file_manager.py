@@ -6,6 +6,7 @@ import hashlib
 import uuid
 import logging
 from app.core.config import settings
+from app.utils.path_utils import sanitize_ebook_path
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +15,26 @@ class FileManager:
     
     def __init__(self):
         self.base_dir = settings.EBOOKS_DIR
+
+    def _safe_path(self, rel: str) -> Path:
+        """Resolve a user-supplied relative path against the ebooks dir,
+        rejecting anything that would escape it (path traversal)."""
+        raw = (rel or "").lstrip("/")
+        if any(part == ".." for part in raw.split("/")):
+            raise ValueError("Path traversal not allowed")
+        cleaned = sanitize_ebook_path(raw)
+        target = (self.base_dir / cleaned).resolve() if cleaned else self.base_dir.resolve()
+        if not target.is_relative_to(self.base_dir.resolve()):
+            raise ValueError("Path outside ebooks directory")
+        return target
+
+    @staticmethod
+    def _safe_filename(filename: str) -> str:
+        """Strip any directory component from an upload filename."""
+        name = Path(filename or "").name
+        if not name or name in (".", ".."):
+            raise ValueError("Invalid filename")
+        return name
     
     def _compute_file_hash(self, file_path: Path) -> str:
         """Compute MD5 hash of file content."""
@@ -38,20 +59,20 @@ class FileManager:
     
     def _get_stream_cache_info(self, ebook_path: str) -> Dict:
         """Get stream cache info for an ebook path."""
-        from app.utils.path_utils import _resolve_ebook_path, safe_stem
+        from app.utils.path_utils import (
+            _resolve_ebook_path, safe_stem, compute_ebook_hash, find_audio_cache_dir,
+        )
         
         base_dir = settings.AUDIOBOOKS_DIR
         ebook_stem = Path(ebook_path).stem
         safe = safe_stem(ebook_stem)
         full_path = _resolve_ebook_path(ebook_path, base_dir)
         
-        try:
-            stat = full_path.stat()
-            file_hash = hashlib.md5(f"{stat.st_mtime}:{stat.st_size}".encode()).hexdigest()[:12]
-        except Exception:
-            file_hash = "unknown"
+        file_hash = compute_ebook_hash(full_path)[:12] or "unknown"
         
         cache_base = base_dir / f"_stream_cache_{safe}_{file_hash}"
+        if not cache_base.exists():
+            cache_base = find_audio_cache_dir(ebook_stem, base_dir) or cache_base
         total_size = 0
         file_count = 0
         
@@ -92,6 +113,7 @@ class FileManager:
             parse_cache_size_mb, stream_cache_size_mb, stream_cache_count.
         """
         duplicates = []
+        filename = self._safe_filename(filename)
         
         # Use rglob to find all files matching the filename
         for item in self.base_dir.rglob(filename):
@@ -100,7 +122,7 @@ class FileManager:
             if item.name != filename:
                 continue
             
-            rel_path = str(item.relative_to(self.base_dir))
+            rel_path = str(item.relative_to(self.base_dir.resolve()))
             
             try:
                 stat = item.stat()
@@ -280,11 +302,13 @@ class FileManager:
         Save an uploaded file atomically to avoid race conditions.
         Uses temp file + rename pattern.
         """
-        target_dir = self.base_dir / subpath
+        target_dir = self._safe_path(subpath or "")
         target_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_name = self._safe_filename(file.filename)
         
         # Generate unique temp filename (hidden, so it won't show in listings)
-        temp_filename = f".tmp_{uuid.uuid4().hex[:8]}_{file.filename}"
+        temp_filename = f".tmp_{uuid.uuid4().hex[:8]}_{safe_name}"
         temp_path = target_dir / temp_filename
         
         # Write to temp file
@@ -292,10 +316,10 @@ class FileManager:
             shutil.copyfileobj(file.file, f)
         
         # Atomically move to final location (rename is atomic on same filesystem)
-        final_path = target_dir / file.filename
+        final_path = target_dir / safe_name
         shutil.move(str(temp_path), str(final_path))
         
-        return final_path.relative_to(self.base_dir)
+        return final_path.relative_to(self.base_dir.resolve())
     
     def check_active_generation(self, ebook_path: str) -> Optional[Dict]:
         """
@@ -353,7 +377,7 @@ class FileManager:
     
     def list_files(self, subpath: str = "", limit: int = 100, offset: int = 0) -> List[Dict]:
         """List files and directories in a path with pagination"""
-        target_dir = self.base_dir / subpath
+        target_dir = self._safe_path(subpath or "")
 
         if not target_dir.exists():
             raise ValueError(f"Directory not found: {subpath}")
@@ -369,7 +393,7 @@ class FileManager:
             if count >= limit:
                 break
 
-            rel_path = item.relative_to(self.base_dir)
+            rel_path = item.relative_to(self.base_dir.resolve())
             is_dir = item.is_dir()
 
             items.append({
@@ -385,19 +409,20 @@ class FileManager:
     
     def save_uploaded_file(self, file: UploadFile, subpath: str = "") -> Path:
         """Save an uploaded file (non-atomic, use save_uploaded_file_atomic for new code)"""
-        target_dir = self.base_dir / subpath
+        target_dir = self._safe_path(subpath or "")
         target_dir.mkdir(parents=True, exist_ok=True)
-        
-        file_path = target_dir / file.filename
+
+        safe_name = self._safe_filename(file.filename)
+        file_path = target_dir / safe_name
         
         with open(file_path, 'wb') as f:
             shutil.copyfileobj(file.file, f)
         
-        return file_path.relative_to(self.base_dir)
+        return file_path.relative_to(self.base_dir.resolve())
     
     def delete_file(self, file_path: str):
         """Delete a file"""
-        target = self.base_dir / file_path
+        target = self._safe_path(file_path)
         
         if not target.exists():
             raise ValueError(f"File not found: {file_path}")
@@ -411,8 +436,8 @@ class FileManager:
     
     def move_file(self, source: str, destination: str) -> Path:
         """Move a file to a different location"""
-        source_path = self.base_dir / source
-        dest_path = self.base_dir / destination
+        source_path = self._safe_path(source)
+        dest_path = self._safe_path(destination)
         
         if not source_path.exists():
             raise ValueError(f"Source not found: {source}")
@@ -425,10 +450,10 @@ class FileManager:
         
         shutil.move(str(source_path), str(dest_path))
         
-        return dest_path.relative_to(self.base_dir)
+        return dest_path.relative_to(self.base_dir.resolve())
     
     def create_directory(self, dir_path: str) -> Path:
         """Create a new directory"""
-        target = self.base_dir / dir_path
+        target = self._safe_path(dir_path)
         target.mkdir(parents=True, exist_ok=True)
-        return target.relative_to(self.base_dir)
+        return target.relative_to(self.base_dir.resolve())

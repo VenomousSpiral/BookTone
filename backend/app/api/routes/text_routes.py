@@ -15,7 +15,6 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.services import stream_service
 from app.models.streaming_models import TextBatchRequest
-from app.core.config import settings
 from app.utils.validators import validate_ebook_path
 
 router = APIRouter()

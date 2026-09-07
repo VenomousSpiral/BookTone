@@ -9,7 +9,6 @@ Endpoints:
 import time
 import logging
 import traceback
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response

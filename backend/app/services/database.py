@@ -1,7 +1,5 @@
 """SQLite database connection and schema management."""
-import json
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 
 import sqlite3

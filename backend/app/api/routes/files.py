@@ -10,7 +10,6 @@ from app.core.config import settings
 from app.services.file_manager import FileManager
 from app.services import stream_service
 from app.services.ebook_parser import EbookParser
-from app.utils.validators import validate_ebook_path
 
 router = APIRouter()
 file_manager = FileManager()
@@ -380,7 +379,7 @@ async def move_file(request: MoveFileRequest):
     """
     try:
         # Check if the source is a directory using the same base dir as move_file.
-        _source_abs = settings.EBOOKS_DIR / request.source
+        _source_abs = file_manager._safe_path(request.source)
         source_is_dir = _source_abs.is_dir()
         new_path = file_manager.move_file(request.source, request.destination)
 
@@ -417,11 +416,11 @@ async def create_directory(request: CreateDirectoryRequest):
 async def create_file(request: CreateFileRequest):
     """Create a new file with optional content"""
     try:
-        full_path = settings.EBOOKS_DIR / request.path
+        full_path = file_manager._safe_path(request.path)
         full_path.parent.mkdir(parents=True, exist_ok=True)
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(request.content or "")
-        return {"message": "File created successfully", "path": str(full_path)}
+        return {"message": "File created successfully", "path": str(full_path.relative_to(file_manager.base_dir))}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -429,7 +428,7 @@ async def create_file(request: CreateFileRequest):
 async def download_file(file_path: str):
     """Download a file"""
     try:
-        full_path = settings.EBOOKS_DIR / file_path
+        full_path = file_manager._safe_path(file_path)
         if not full_path.exists():
             raise HTTPException(status_code=404, detail="File not found")
         return FileResponse(
