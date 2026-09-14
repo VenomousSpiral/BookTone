@@ -346,13 +346,6 @@ def build_ffmetadata(chapters, chunk_durations, total_duration_sec):
         if len(parts) > 1 and parts[-1].isdigit():
             num = int(parts[-1]) + 1
             return f"Chapter {num}"
-
-        cleaned = lower.replace("_", " ").title()
-        for prefix in ("Two Stars Path To Solace Split",):
-            if cleaned.startswith(prefix):
-                remainder = cleaned[len(prefix):].strip().lstrip('0')
-                return (f"Chapter {remainder}"
-                        if remainder and remainder.isdigit() else f"Part {idx + 1}")
         return f"Section {idx + 1}"
 
     lines = [";FFMETADATA1"]
