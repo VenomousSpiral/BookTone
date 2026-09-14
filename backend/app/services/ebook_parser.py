@@ -183,20 +183,21 @@ class EbookParser:
         if not paragraphs:
             return ''
         
-        # Skip initial metadata lines (title, author, etc.) - usually short and contain
-        # keywords like "Through", "the Heart", book title patterns, or special chars  
+        # Skip initial metadata lines (title, author, URL, etc.) and find where
+        # actual story content begins. Front matter is typically short (<100 chars),
+        # contains URLs or special separators; story prose is longer with natural text.
         start_idx = 0
         for i, para in enumerate(paragraphs):
-            # Look for actual story content: longer paragraphs with regular prose
-            if len(para) > 100 and not any(kw in para.lower() for kw in [
-                'through the heart',
-                '無職転生', 
-                '異世界行ったら本気だす',
-                '理不尽な孫の手',
-                '| mushoku'
-            ]):
-                # Check if this looks like actual story text (has dialogue or narrative)
-                if any(marker in para for marker in ['"', "'", '.', ',', '!']):
+            if len(para) > 100:
+                # Heuristic: skip lines that look like metadata/front matter
+                # - Contains a URL (http/https)
+                # - Has pipe separators typical of AO3 metadata bars
+                # - All-caps single word or short phrases with dashes
+                is_metadata = (
+                    '://' in para or
+                    '---' not in para and len(para.split('|')) > 2
+                )
+                if not is_metadata:
                     start_idx = i
                     break
         
