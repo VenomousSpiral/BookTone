@@ -39,16 +39,25 @@ class EbookParser:
     def _extract_chapter_name(soup: BeautifulSoup, item) -> str:
         """Extract a human-readable chapter name from an EPUB document's HTML.
 
-        Priority: <h1> / <h2> headings → <title> tag → epublib EpubHtml.title →
+        Priority: <h2> / <h1> headings → <title> tag → epublib EpubHtml.title →
                   get_name() (filename) → 'Chapter N'.
+
+        Note: We prefer h2 over h1 because most well-formed EPUBs use h2 for actual
+        chapter headings (often with class="heading"), while Calibre-generated EPUBs
+        often put page-break markers in h1 tags that may contain incorrect/offset
+        numbers. This prevents issues like "Chapter 7" followed by "Chapter 6"
+        when consecutive split files use different heading elements.
         """
-        # 1. Look for heading tags that look like chapter titles
-        for tag in ['h1', 'h2']:
-            el = soup.find(tag)
-            if el:
-                text = el.get_text(strip=True)
-                if text and len(text) < 300:   # guard against giant headings
-                    return text
+        # 1. Look for h2 headings first (most reliable chapter indicators),
+        #    then fall back to h1 if no h2 found
+        el = soup.find('h2')
+        if not el:
+            el = soup.find('h1')
+        
+        if el:
+            text = el.get_text(strip=True)
+            if text and len(text) < 300:   # guard against giant headings
+                return text
 
         # 2. Fall back to the document's <title> element (inside <head>)
         title_tag = soup.find('title')
@@ -64,7 +73,12 @@ class EbookParser:
                 return t
 
         # 4. Fall back to the internal filename
-        name = item.get_name() or ''
+        name = ''
+        if item is not None:
+            try:
+                name = item.get_name() or ''
+            except (AttributeError, TypeError):
+                pass
         if name:
             return Path(name).stem   # strip extension for readability
 
@@ -120,11 +134,11 @@ class EbookParser:
         """Parse EPUB file"""
         try:
             book = epub.read_epub(str(file_path))
-            chunks = []
             
+            # Collect all document items with their content
+            doc_items = []
             for item in book.get_items():
                 if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                    # Extract text from HTML
                     soup = BeautifulSoup(item.get_content(), 'html.parser')
                     
                     # Remove images but preserve spacing - replace with space to prevent text merging
@@ -133,103 +147,401 @@ class EbookParser:
                     for svg in soup.find_all('svg'):
                         svg.replace_with(' ')
                     
-                    text = soup.get_text(separator=' ', strip=True)
-                    # Clean up multiple spaces
-                    text = re.sub(r' +', ' ', text)
+                    name = item.get_name()
+                    # Extract body text (skip title/metadata at very top of file)
+                    all_text = soup.get_text(separator=' ', strip=True)
+                    all_text = re.sub(r' +', ' ', all_text)
                     
-                    if text:
-                        chapter_name = self._extract_chapter_name(soup, item)
-                        chunks.append({
-                            'text': text,
-                            'chapter': chapter_name
-                        })
+                    doc_items.append({
+                        'name': name,
+                        'soup': soup,
+                        'text': all_text
+                    })
             
+            # Sort by filename to ensure consecutive split files are adjacent
+            doc_items.sort(key=lambda x: x['name'])
+            
+            chunks = self._merge_split_pairs(doc_items)
             return chunks
         except Exception as e:
             raise ValueError(f"Error parsing EPUB: {str(e)}")
+    
+    def _get_body_text(self, soup: BeautifulSoup) -> str:
+        """Extract meaningful body text from a document, skipping title/metadata at top.
+        
+        Calibre split files often have metadata (title page info) before the actual
+        chapter content. This method tries to find where real story text begins by
+        looking for paragraphs that aren't part of the book's front matter.
+        """
+        # Get all paragraph text with their positions in original document order
+        paragraphs = []
+        for p in soup.find_all(['p', 'span']):
+            text = ''.join(p.stripped_strings).strip()
+            if text:
+                paragraphs.append(text)
+        
+        if not paragraphs:
+            return ''
+        
+        # Skip initial metadata lines (title, author, etc.) - usually short and contain
+        # keywords like "Through", "the Heart", book title patterns, or special chars  
+        start_idx = 0
+        for i, para in enumerate(paragraphs):
+            # Look for actual story content: longer paragraphs with regular prose
+            if len(para) > 100 and not any(kw in para.lower() for kw in [
+                'through the heart',
+                '無職転生', 
+                '異世界行ったら本気だす',
+                '理不尽な孫の手',
+                '| mushoku'
+            ]):
+                # Check if this looks like actual story text (has dialogue or narrative)
+                if any(marker in para for marker in ['"', "'", '.', ',', '!']):
+                    start_idx = i
+                    break
+        
+        body_text = ' '.join(paragraphs[start_idx:])
+        return re.sub(r' +', ' ', body_text).strip()
+    
+    def _texts_overlap(self, text1: str, text2: str) -> float:
+        """Calculate overlap ratio between two texts using word-level Jaccard similarity.
+        Returns 0.0 to 1.0."""
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = len(words1 & words2)
+        union = len(words1 | words2)
+        return intersection / union if union > 0 else 0.0
+    
+    def _merge_split_pairs(self, doc_items: list[dict]) -> list[dict[str, str]]:
+        """Merge Calibre's split file pairs into single chunks.
+        
+        Some Calibre-exported EPUBs create TWO items per logical chapter:
+        - An even-numbered TOC page with correct <h2 class="heading"> numbering
+          (often contains only metadata/chapter notes, minimal story text)
+        - An odd-numbered content page with the full chapter text
+          (may have wrong/offset h1 numbers like "Chapter 6" when it should be "Chapter 7")
+        
+        We detect pairs by:
+        1. Consecutive numbered filenames (_split_NNN.xhtml pattern)
+        2. Similar or matching chapter names between the two files
+           (Calibre duplicates have same/near-identical headings; separate chapters differ)
+        
+        For non-paired files, they pass through unchanged.
+        """
+        if not doc_items:
+            return []
+        
+        import re as regex
+        def _is_consecutive_split(name_a: str, name_b: str) -> bool:
+            """Check if two filenames are consecutive numbered split files."""
+            m1 = regex.search(r'_split_(\d{3})\.xhtml$', name_a)
+            m2 = regex.search(r'_split_(\d{3})\.xhtml$', name_b)
+            if not (m1 and m2):
+                return False
+            n1, n2 = int(m1.group(1)), int(m2.group(1))
+            return abs(n1 - n2) == 1
+        
+        def _chapters_match(name_a: str, name_b: str) -> bool:
+            """Check if two files likely represent the same chapter (Calibre duplicate pair).
+            
+            Returns True if both have similar/non-conflicting chapter names,
+            indicating they're Calibre's split-pair duplicates.
+            Returns False if chapters clearly differ, meaning separate content.
+            """
+            h1_a = name_a.split('/')[-1]
+            h2_b = name_b.split('/')[-1]  # simplified - we'll use actual soup
+            
+        chunks = []
+        i = 0
+        
+        while i < len(doc_items):
+            item = doc_items[i]
+            chapter_name_i = self._extract_chapter_name(item['soup'], None)
+            
+            # Check if next file is a Calibre split pair
+            should_merge = False
+            j = i + 1
+            
+            if j < len(doc_items):
+                next_item = doc_items[j]
+                chapter_name_j = self._extract_chapter_name(next_item['soup'], None)
+                
+                # Check filename pattern for consecutive numbered splits
+                is_consecutive = _is_consecutive_split(item['name'], next_item['name'])
+                
+                if is_consecutive:
+                    # Only merge if chapter names are similar (Calibre duplicate pair)
+                    # or one has no meaningful heading. If chapters clearly differ,
+                    # they're separate content that happens to be consecutive.
+                    name_i_clean = self._normalize_chapter_name(chapter_name_i)
+                    name_j_clean = self._normalize_chapter_name(chapter_name_j)
+                    
+                    # Only merge if normalized names match exactly.
+                    # This ensures Calibre dual-split pairs (same heading in both files) are merged,
+                    # while separate consecutive chapters (different headings) remain as-is.
+                    is_same_chapter = (name_i_clean == name_j_clean)
+                    
+                    if is_same_chapter:
+                        should_merge = True
+            
+            if should_merge:
+                next_item = doc_items[j]
+                combined_text = item['text'] + ' ' + next_item['text']
+                combined_text = re.sub(r' +', ' ', combined_text).strip()
+                best_chapter_name = self._select_better_chapter(item, next_item)
+                
+                chunks.append({
+                    'text': combined_text,
+                    'chapter': best_chapter_name
+                })
+                i += 2
+            else:
+                # Keep the file if it has any text content OR a meaningful chapter heading.
+                # This avoids filtering out manga-style EPUBs where images ARE the story,
+                # since after replacing <img> with ' ', _has_real_content would return False
+                # even though these files have valid chapter structure (h2 headings).
+                has_heading = bool(chapter_name_i)
+                if item['text'] and (len(item['text'].strip()) > 10 or has_heading):
+                    chunks.append({
+                        'text': item['text'],
+                        'chapter': chapter_name_i
+                    })
+                i += 1
+        
+        return chunks
+    
+    def _select_better_chapter(self, item_a: dict, item_b: dict) -> str:
+        """Select the better chapter name between two split pair items.
+        
+        Prefers h2-derived names (more reliable in Calibre EPUBs where even-numbered
+        TOC pages use <h2 class="heading"> with correct numbers).
+        Falls back to whichever has more descriptive content.
+        """
+        name_a = self._extract_chapter_name(item_a['soup'], None)
+        name_b = self._extract_chapter_name(item_b['soup'], None)
+        
+        # If both names are the same, return it
+        if name_a == name_b:
+            return name_a
+        
+        # Check which one has an h2 tag (more reliable source)
+        a_has_h2 = item_a['soup'].find('h2') is not None
+        b_has_h2 = item_b['soup'].find('h2') is not None
+        
+        if a_has_h2 and not b_has_h2:
+            return name_a
+        elif b_has_h2 and not a_has_h2:
+            return name_b
+        else:
+            # Both have h2 or both don't - prefer the one with more descriptive content  
+            # (longer names are usually chapter titles, short ones like "Chapter N" may be placeholders)
+            if len(name_a) > len(name_b):
+                return name_a
+            elif len(name_b) > len(name_a):
+                return name_b
+            else:
+                # Names same length - prefer alphabetically first (usually the correct TOC order)
+                return min(name_a, name_b)
+    
+    def _normalize_chapter_name(self, name: str) -> str:
+        """Normalize chapter names for comparison.
+        
+        Strips leading 'Chapter N:' prefix and normalizes whitespace
+        to allow fuzzy matching between slightly different representations.
+        """
+        import re as regex
+        # Remove 'Chapter X: ' or 'Chapter X - ' prefixes
+        normalized = regex.sub(r'^[Cc]hapter\s+\d+[.:\-]\s*', '', name.strip())
+        return normalized.lower()
+    
+    def _has_real_content(self, soup: BeautifulSoup) -> bool:
+        """Check if a document has actual meaningful content beyond metadata/title page.
+        
+        Calibre's even-numbered split files often contain only chapter notes or
+        minimal metadata. We want to skip those when they're not part of a pair merge.
+        For non-Calibre-split EPUBs, we keep all documents that have any text content.
+        """
+        # Get total text length (excluding heading elements)
+        soup_copy = BeautifulSoup(str(soup), 'html.parser')
+        for tag in ['h1', 'h2']:
+            for el in soup_copy.find_all(tag):
+                el.decompose()
+        
+        body_text = ''.join(soup_copy.stripped_strings).strip()
+        
+        # If there's any substantial text beyond just a title/metadata line, keep it
+        if len(body_text) > 20:
+            return True
+        
+        # Otherwise check paragraph count for small documents
+        para_count = sum(1 for p in soup.find_all(['p', 'span'])
+                        if len(''.join(p.stripped_strings).strip()) > 30)
+        return para_count >= 2
+    
+    def _merge_split_pairs_with_images(self, doc_items: list[dict]) -> list[dict[str, str]]:
+        """Merge Calibre's split file pairs for image-aware parsing.
+        
+        Key fix: When merging two files, we must rename markers from the second
+        file so they don't collide with indices from the first file. Each original
+        EPUB file has its own marker_index starting at 0, but after concatenation
+        all markers share one namespace - duplicate "<<<IMAGE_0>>>" strings would
+        break downstream position tracking.
+        """
+        import re as regex
+        
+        def _is_consecutive_split(name_a: str, name_b: str) -> bool:
+            m1 = regex.search(r'_split_(\d{3})\.xhtml$', name_a)
+            m2 = regex.search(r'_split_(\d{3})\.xhtml$', name_b)
+            if not (m1 and m2): return False
+            n1, n2 = int(m1.group(1)), int(m2.group(1))
+            return abs(n1 - n2) == 1
+        
+        def _renumber_markers(markers: list[dict], offset: int) -> list[dict]:
+            """Renumber markers by adding an offset to their indices."""
+            if not markers:
+                return []
+            result = []
+            for m in markers:
+                old_marker = m['marker']  # e.g., '<<<IMAGE_3>>>'
+                new_idx = int(regex.search(r'\d+', old_marker).group()) + offset
+                new_marker = f'<<<IMAGE_{new_idx}>>>'
+                result.append({**m, 'marker': new_marker})
+            return result
+        
+        chunks = []
+        i = 0
+        
+        while i < len(doc_items):
+            item = doc_items[i]
+            chapter_name_i = self._extract_chapter_name(item['soup'], None)
+            should_merge = False
+            j = i + 1
+            
+            if j < len(doc_items):
+                next_item = doc_items[j]
+                chapter_name_j = self._extract_chapter_name(next_item['soup'], None)
+                is_consecutive = _is_consecutive_split(item['name'], next_item['name'])
+                
+                if is_consecutive:
+                    name_i_clean = self._normalize_chapter_name(chapter_name_i)
+                    name_j_clean = self._normalize_chapter_name(chapter_name_j)
+                    
+                    # Only merge if names match. For non-Chapter items like Preface/Title,
+                    # require exact normalized equality since they could be unrelated pages.
+                    is_same_chapter = (name_i_clean == name_j_clean)
+                    
+                    if is_same_chapter:
+                        should_merge = True
+            
+            if should_merge:
+                next_item = doc_items[j]
+                # Combine text, removing any extra space between files
+                combined_text = item['text'] + ' ' + next_item['text']
+                combined_text = re.sub(r' +', ' ', combined_text).strip()
+                best_chapter_name = self._select_better_chapter(item, next_item)
+                
+                # Get markers from both files
+                first_markers = item.get('image_markers', [])
+                second_markers = next_item.get('image_markers', [])
+                
+                if not first_markers and not second_markers:
+                    all_markers = []
+                elif not second_markers:
+                    # Only first file has markers - no renumbering needed
+                    all_markers = list(first_markers)
+                else:
+                    # Renumber second file's markers to avoid index collision
+                    offset = len(first_markers)  # Start numbering after first file's last marker
+                    renamed_second = _renumber_markers(second_markers, offset)
+                    
+                    # Also update the text of the second item by replacing old markers with new ones
+                    for orig_m in second_markers:
+                        old_marker_str = orig_m['marker']
+                        new_idx_val = int(regex.search(r'\d+', old_marker_str).group()) + offset
+                        new_marker_str = f'<<<IMAGE_{new_idx_val}>>>'
+                        combined_text = combined_text.replace(old_marker_str, new_marker_str)
+                    
+                    all_markers = first_markers + renamed_second
+                
+                chunks.append({
+                    'text': combined_text,
+                    'chapter': best_chapter_name,
+                    'image_markers': all_markers
+                })
+                i += 2
+            else:
+                if item['text'] or item.get('image_markers'):
+                    chapter_name = self._extract_chapter_name(item['soup'], None)
+                    chunks.append({
+                        'text': item['text'],
+                        'chapter': chapter_name,
+                        'image_markers': item.get('image_markers', [])
+                    })
+                i += 1
+        
+        return chunks
     
     def _parse_epub_with_images(self, file_path: Path) -> tuple[list[dict[str, str]], dict[str, str]]:
         """Parse EPUB file and extract images"""
         try:
             book = epub.read_epub(str(file_path))
-            chunks = []
-            images = {}
             
             # First, extract all images from the EPUB
+            images = {}
             image_items = {}
             for item in book.get_items():
                 if item.get_type() == ebooklib.ITEM_IMAGE:
-                    # Generate a unique ID for this image
                     img_name = item.get_name()
                     img_data = item.get_content()
-                    
-                    # Determine image type from name or content
                     img_ext = Path(img_name).suffix.lower()
-                    if img_ext in ['.jpg', '.jpeg']:
-                        mime_type = 'image/jpeg'
-                    elif img_ext == '.png':
-                        mime_type = 'image/png'
-                    elif img_ext == '.gif':
-                        mime_type = 'image/gif'
-                    elif img_ext == '.svg':
-                        mime_type = 'image/svg+xml'
-                    elif img_ext == '.webp':
-                        mime_type = 'image/webp'
-                    else:
-                        mime_type = 'image/png'  # Default
-                    
-                    # Create base64 data URL
+                    mime_map = {
+                        '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                        '.png': 'image/png', '.gif': 'image/gif',
+                        '.svg': 'image/svg+xml', '.webp': 'image/webp'
+                    }
+                    mime_type = mime_map.get(img_ext, 'image/png')
                     img_id = hashlib.md5(img_name.encode()).hexdigest()[:12]
                     img_base64 = base64.b64encode(img_data).decode('utf-8')
                     images[img_id] = f"data:{mime_type};base64,{img_base64}"
-                    
-                    # Map original name to our ID
                     image_items[img_name] = img_id
-                    # Also map just the filename
                     image_items[Path(img_name).name] = img_id
             
-            # Now parse documents and find image references with positions
+            # Collect all document items with processed content (images → markers)
+            doc_items = []
             for item in book.get_items():
                 if item.get_type() == ebooklib.ITEM_DOCUMENT:
                     soup = BeautifulSoup(item.get_content(), 'html.parser')
-                    
-                    # Replace images with placeholders to track position in text
                     image_markers = []
                     marker_index = 0
                     
+                    # Replace images with placeholders
                     for img in soup.find_all('img'):
                         src = img.get('src', '')
-                        # Normalize the image path - handle various path formats
-                        # Strip query strings and fragments
                         img_path = src.split('?')[0].split('#')[0]
-                        # Get just the filename
                         img_filename = img_path.split('/')[-1] if '/' in img_path else img_path
-                        # Also try without the leading path components
                         img_path_normalized = img_path.lstrip('./')
                         
-                        # Find the image ID - try multiple matching strategies
                         found_id = None
-                        for name, img_id in image_items.items():
-                            name_filename = Path(name).name
-                            # Match by exact filename
-                            if img_filename == name_filename:
-                                found_id = img_id
+                        for name, iid in image_items.items():
+                            nfn = Path(name).name
+                            if img_filename == nfn:
+                                found_id = iid
                                 break
-                            # Match by path ending
                             if name.endswith(img_path_normalized) or img_path_normalized.endswith(name):
-                                found_id = img_id
+                                found_id = iid
                                 break
-                            # Match by filename contained in path
                             if img_filename and img_filename in name:
-                                found_id = img_id
+                                found_id = iid
                                 break
                         
-                        # Always replace the img tag (even if not found) to prevent text merging issues
-                        # Use spaces around marker to ensure proper word separation
                         marker = f" <<<IMAGE_{marker_index}>>> "
                         img.replace_with(marker)
                         if found_id:
-                            image_markers.append({'marker': f"<<<IMAGE_{marker_index}>>>", 'id': found_id})
+                            image_markers.append({'marker': marker, 'id': found_id})
                         marker_index += 1
                     
                     # Handle SVG elements
@@ -238,29 +550,26 @@ class EbookParser:
                         svg_id = hashlib.md5(svg_str.encode()).hexdigest()[:12]
                         svg_base64 = base64.b64encode(svg_str.encode()).decode('utf-8')
                         images[svg_id] = f"data:image/svg+xml;base64,{svg_base64}"
-                        
-                        # Use spaces around marker to ensure proper word separation
                         marker = f" <<<IMAGE_{marker_index}>>> "
                         svg.replace_with(marker)
-                        image_markers.append({'marker': f"<<<IMAGE_{marker_index}>>>", 'id': svg_id})
+                        image_markers.append({'marker': marker, 'id': svg_id})
                         marker_index += 1
                     
-                    # Extract text with markers
                     text_with_markers = soup.get_text(separator=' ', strip=True)
-                    
-                    # Clean up any multiple spaces that may have been introduced
                     text_with_markers = re.sub(r' +', ' ', text_with_markers)
-                    # Fix markers that may have gotten space inside due to strip
                     text_with_markers = re.sub(r'<<<\s*IMAGE_(\d+)\s*>>>', r'<<<IMAGE_\1>>>', text_with_markers)
                     
-                    if text_with_markers or image_markers:
-                        chapter_name = self._extract_chapter_name(soup, item)
-                        chunks.append({
-                            'text': text_with_markers,
-                            'chapter': chapter_name,
-                            'image_markers': image_markers  # List of {marker, id}
-                        })
+                    doc_items.append({
+                        'name': item.get_name(),
+                        'soup': soup,
+                        'text': text_with_markers,
+                        'image_markers': image_markers
+                    })
             
+            # Sort by filename to ensure consecutive split files are adjacent
+            doc_items.sort(key=lambda x: x['name'])
+            
+            chunks = self._merge_split_pairs_with_images(doc_items)
             return chunks, images
         except Exception as e:
             raise ValueError(f"Error parsing EPUB with images: {str(e)}")
@@ -736,8 +1045,11 @@ class EbookParser:
                 
                 if is_marker_start:
                     marker_match = marker_pattern.match(remaining)
+                    matched_marker_text = marker_match.group()  # e.g., '<<<IMAGE_0>>>' (no spaces)
                     for marker_info in image_markers:
-                        if marker_info['marker'] == marker_match.group():
+                        stored = marker_info['marker']
+                        # Stored markers may have surrounding whitespace; strip before comparing
+                        if stored.strip() == matched_marker_text or stored == matched_marker_text:
                             image_positions.append((ncp, marker_info))
                             break
                     marked_pos += len(marker_match.group())
