@@ -7,6 +7,7 @@ Uses extracted GenerationQueue and ProfileManager for separation of concerns.
 """
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -27,6 +28,9 @@ class StreamAudiobookService:
         self.ebook_parser = EbookParser()
         self.queue = GenerationQueue()
         self.profile_manager = ProfileManager()
+        # Thread pool for blocking I/O (file reads/writes, HTTP calls) during generation
+        # This prevents concurrent book generation from blocking the event loop entirely.
+        self._io_executor = ThreadPoolExecutor(max_workers=4)
 
     def create_profile(self, ebook_path: str, model: str, voice: str) -> dict:
         """Create a new profile for an ebook/model/voice combo."""
@@ -78,7 +82,7 @@ class StreamAudiobookService:
             "status": "paused",
         }
 
-    def resume_generation(
+    async def resume_generation(
         self, ebook_path: str, model: str, voice: str, background_tasks
     ) -> dict:
         """Resume current generation or start next in queue."""
@@ -92,7 +96,7 @@ class StreamAudiobookService:
             ebook_path, model, voice, "in_progress"
         )
         self.queue.enqueue(ebook_path, model, voice)
-        self._start_next_in_queue(background_tasks)
+        await self._start_next_in_queue(background_tasks)
 
         profile = self.profile_manager.get_profile(ebook_path, model, voice)
         return dict(profile) if profile else {}
@@ -257,7 +261,7 @@ class StreamAudiobookService:
     #  Generation orchestration                                          #
     # ------------------------------------------------------------------ #
 
-    def start_generation_for_cache(
+    async def start_generation_for_cache(
         self,
         ebook_path: str,
         model: str,
@@ -277,7 +281,11 @@ class StreamAudiobookService:
             return dict(profile) if profile else {}
 
         try:
-            ebook_data = self.stream_service.parse_ebook_for_streaming(ebook_path)
+            # Parse ebook in thread pool to avoid blocking event loop during file I/O
+            ebook_data = await asyncio.get_event_loop().run_in_executor(
+                self._io_executor,
+                lambda: self.stream_service.parse_ebook_for_streaming(ebook_path)
+            )
             total_chunks = len(ebook_data["chunks"])
             chapters = ebook_data.get("chapters", [])
 
@@ -290,7 +298,7 @@ class StreamAudiobookService:
             self.queue.enqueue(ebook_path, model, voice)
 
             if self.queue.get_queue_length() == 1 and not self.queue.get_current_tuple():
-                self._start_next_in_queue(background_tasks)
+                await self._start_next_in_queue(background_tasks)
 
             profile = self.profile_manager.get_profile(ebook_path, model, voice)
             return dict(profile) if profile else {}
@@ -302,7 +310,7 @@ class StreamAudiobookService:
             )
             raise
 
-    def _start_next_in_queue(
+    async def _start_next_in_queue(
         self, background_tasks, item: Optional[Tuple[str, str, str]] = None
     ):
         """Start a generation item. If item is None, dequeue the next one."""
@@ -320,8 +328,10 @@ class StreamAudiobookService:
 
         async def _generation_task():
             try:
-                ebook_data = self.stream_service.parse_ebook_for_streaming(
-                    ebook_path
+                # Parse ebook in thread pool to avoid blocking event loop during file I/O
+                ebook_data = await asyncio.get_event_loop().run_in_executor(
+                    self._io_executor,
+                    lambda: self.stream_service.parse_ebook_for_streaming(ebook_path)
                 )
                 total_chunks = len(ebook_data["chunks"])
                 chapters = ebook_data.get("chapters", [])
@@ -333,19 +343,33 @@ class StreamAudiobookService:
                     ebook_path, model, voice, "in_progress"
                 )
 
-                cache_dir = self.stream_service.get_cache_dir(
-                    ebook_path, model, voice
-                )
-                cache_dir.mkdir(parents=True, exist_ok=True)
+                # Get cache dir and create in thread pool to avoid blocking
+                def _create_cache_dir():
+                    d = self.stream_service.get_cache_dir(ebook_path, model, voice)
+                    d.mkdir(parents=True, exist_ok=True)
+                    return d
+                
+                cache_dir = await asyncio.get_event_loop().run_in_executor(
+                    self._io_executor, _create_cache_dir)
 
-                # CAS: build set of content hashes already cached on disk
-                existing_hashed = set()
-                if cache_dir.exists():
-                    for af in cache_dir.glob(f"*.{settings.AUDIO_FORMAT}"):
-                        stem = af.stem
-                        # Valid MD5-prefix filename is 16 hex chars (no directory separators)
-                        if len(stem) == 16 and all(c in '0123456789abcdef' for c in stem):
-                            existing_hashed.add(stem)
+                # CAS: build set of content hashes already cached on disk (file I/O)
+                def _scan_existing_hashes():
+                    hashed = set()
+                    if cache_dir.exists():
+                        import os
+                        for fname in os.listdir(str(cache_dir)):
+                            full_path = cache_dir / fname
+                            try:
+                                stem = Path(fname).stem
+                                # Valid MD5-prefix filename is 16 hex chars (no directory separators)
+                                if len(stem) == 16 and all(c in '0123456789abcdef' for c in stem):
+                                    hashed.add(stem)
+                            except Exception:
+                                pass
+                    return hashed
+                
+                existing_hashed = await asyncio.get_event_loop().run_in_executor(
+                    self._io_executor, _scan_existing_hashes)
 
                 completed = 0
                 for i in range(total_chunks):
@@ -376,21 +400,31 @@ class StreamAudiobookService:
 
                     try:
                         # Audiobook generation always saves to disk regardless of streaming setting
-                        audio_data = self.stream_service.generate_audio_for_text(
-                            text, model, voice,
-                            ebook_path=ebook_path,
-                            start_char=start_char,
-                            end_char=end_char,
-                            save_to_disk=True,
-                        )
-                        # CAS: write with content-hash filename (stable across versions)
-                        audio_file = (
-                            cache_dir / f"{content_hash}.{settings.AUDIO_FORMAT}"
-                        ) if content_hash else (
-                            cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
-                        )
-                        with open(audio_file, "wb") as f:
-                            f.write(audio_data)
+                        # Run blocking HTTP call in thread pool so concurrent books don't block each other
+                        def _generate_audio():
+                            return self.stream_service.generate_audio_for_text(
+                                text, model, voice,
+                                ebook_path=ebook_path,
+                                start_char=start_char,
+                                end_char=end_char,
+                                save_to_disk=True,
+                            )
+                        
+                        audio_data = await asyncio.get_event_loop().run_in_executor(
+                            self._io_executor, _generate_audio)
+                        
+                        # Write file in thread pool to avoid blocking event loop
+                        def _write_audio():
+                            audio_file_path = (
+                                cache_dir / f"{content_hash}.{settings.AUDIO_FORMAT}"
+                            ) if content_hash else (
+                                cache_dir / f"audio_{start_char}_{end_char}.{settings.AUDIO_FORMAT}"
+                            )
+                            with open(audio_file_path, "wb") as f:
+                                f.write(audio_data)
+                        
+                        await asyncio.get_event_loop().run_in_executor(
+                            self._io_executor, _write_audio)
 
                         completed += 1
                         self.profile_manager.update_profile_status(
@@ -438,10 +472,13 @@ class StreamAudiobookService:
             finally:
                 self.queue.clear_current()
                 if not self.queue.get_paused() and self.queue.get_queue_length() > 0:
-                    self._start_next_in_queue(background_tasks)
+                    # Schedule next item as a background task (can't await here)
+                    asyncio.create_task(self._start_next_in_queue(background_tasks))
 
-        loop = asyncio.get_event_loop()
-        task = loop.create_task(_generation_task())
+        # Use asyncio.create_task() instead of get_event_loop().create_task()
+        # This is more reliable in FastAPI's async context and handles recursive
+        # calls (like from finally block) correctly.
+        task = asyncio.create_task(_generation_task())
         self.queue.set_current((ebook_path, model, voice, task))
         logger.info(
             "[QUEUE] Task created and stored: %s/%s/%s",

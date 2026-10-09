@@ -59,7 +59,7 @@ async def generate_cache(
     """Start (or resume) generation for a specific cache entry."""
     ebook_path = validate_ebook_path(request.ebook_path)
     try:
-        result = stream_audiobook_service.start_generation_for_cache(
+        result = await stream_audiobook_service.start_generation_for_cache(
             ebook_path, request.model, request.voice, background_tasks
         )
         return result
@@ -107,7 +107,7 @@ async def cache_resume(
     """Resume generation for a paused/failed cache entry."""
     ebook_path = validate_ebook_path(ebook_path)
     try:
-        result = stream_audiobook_service.resume_generation(
+        result = await stream_audiobook_service.resume_generation(
             ebook_path, model, voice, background_tasks
         )
         return result
