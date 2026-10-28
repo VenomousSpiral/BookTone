@@ -192,6 +192,13 @@ async function handleChunkTransition() {
 
         state.currentChunk++;
         saveProgress();
+
+        // Prefetch future chunks immediately after advancing (not just at natural segment end)
+        // so skipped-to positions have nearby audio ready before the next transition fires
+        if (state.isPlaying) {
+            prefetchAudio(state.currentChunk + 1, CACHE.SIZE);
+        }
+
         await playNextSegment();
     } finally {
         state.isTransitioning = false;
@@ -210,6 +217,9 @@ async function startPlaying() {
     try {
         await loadChunksAround(state.currentChunk, LOAD.RADIUS);
         if (state.isPlaying && !state.isGeneratingAudio) {  // Verify still valid after loading.
+            // Prefetch audio for nearby chunks BEFORE playing first segment
+            // so that by the time we need them during playback, they're already cached
+            prefetchAudio(state.currentChunk + 1, CACHE.SIZE);
             await playNextSegment(true);
         }
     } catch (error) {
@@ -303,6 +313,13 @@ async function playCurrentChunk() {
 
     audio.src = audioUrl;
     audio.playbackRate = parseFloat(DOM.speedControl.value);
+
+    // Start prefetching future chunks NOW (while current chunk plays)
+    // instead of waiting until this segment finishes - this way next chunks
+    // are likely already in cache when we need to transition.
+    if (state.isPlaying) {
+        setTimeout(() => prefetchAudio(state.currentChunk + 1, CACHE.SIZE), 0);
+    }
 
     try {
         await audio.play();
@@ -513,14 +530,17 @@ function prefetchAudio(startChunkIndex, count = CACHE.SIZE) {
         if (state.prefetchInFlight.size >= CACHE.CONCURRENCY) break;
 
         state.prefetchInFlight.add(cacheKey);
-        generateAudio(chunk.start_idx, chunk.end_idx, false, chunkIndex)
+        generateAudio(chunk.start_idx, chunk.end_idx, true, chunkIndex)
             .then(() => state.prefetchInFlight.delete(cacheKey))
             .catch(() => state.prefetchInFlight.delete(cacheKey));
     }
 
-    for (let i = 1; i <= 2; i++) {
+    // Prefetch past chunks (for jumping backward during playback)
+    let prefetchesStarted = Object.values(state.prefetchInFlight).length;
+
+    for (let i = 1; i <= 2 && prefetchesStarted < CACHE.CONCURRENCY; i++) {
         const chunkIndex = state.currentChunk - i;
-        if (chunkIndex < 0 || state.prefetchInFlight.size >= CACHE.CONCURRENCY) break;
+        if (chunkIndex < 0) break;
 
         const chunk = state.book.chunks[chunkIndex];
         // CAS: use content hash as stable key (falls back to index if no hash)
@@ -528,9 +548,17 @@ function prefetchAudio(startChunkIndex, count = CACHE.SIZE) {
 
         if (!state.audioCache.has(cacheKey) && !state.prefetchInFlight.has(cacheKey)) {
             state.prefetchInFlight.add(cacheKey);
-            generateAudio(chunk.start_idx, chunk.end_idx, false, chunkIndex)
-                .then(() => state.prefetchInFlight.delete(cacheKey))
-                .catch(() => state.prefetchInFlight.delete(cacheKey));
+            prefetchesStarted++;
+            generateAudio(chunk.start_idx, chunk.end_idx, true, chunkIndex)
+                .then(() => {
+                    state.prefetchInFlight.delete(cacheKey);
+                    prefetchesStarted--;
+                })
+                .catch(e => {
+                    _log(`[STREAM] Past-chunk prefetch failed for ${chunkIndex}:`, e.message);
+                    state.prefetchInFlight.delete(cacheKey);
+                    prefetchesStarted--;
+                });
         }
     }
 }
