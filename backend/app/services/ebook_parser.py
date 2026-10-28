@@ -349,16 +349,14 @@ class EbookParser:
                 return min(name_a, name_b)
     
     def _normalize_chapter_name(self, name: str) -> str:
-        r"""Normalize chapter names for comparison across languages.
-
-        Strips leading numeric prefixes (e.g. 'Chapter 1:', '\u7b2c3\u7ae0', '\u4e00\u7ae0') 
-        and normalizes whitespace so fuzzy matching works regardless of language.
+        """Normalize chapter names for comparison.
+        
+        Strips leading 'Chapter N:' prefix and normalizes whitespace
+        to allow fuzzy matching between slightly different representations.
         """
         import re as regex
-        # Remove leading word+digit prefix (English 'Chapter X:', CJK '第X章', etc.)
-        normalized = regex.sub(r'^\w+\s*\d+[.:、\- ]*', '', name.strip())
-        # Also strip kanji-numeral + chapter-marker prefixes like '第一章：'
-        normalized = regex.sub(r'^[一二三四五六七八九十百千万]+[章回部巻][：: 、\-]*', '', normalized)
+        # Remove 'Chapter X: ' or 'Chapter X - ' prefixes
+        normalized = regex.sub(r'^[Cc]hapter\s+\d+[.:\-]\s*', '', name.strip())
         return normalized.lower()
     
     def _has_real_content(self, soup: BeautifulSoup) -> bool:
@@ -583,12 +581,8 @@ class EbookParser:
             with open(file_path, 'r', encoding='utf-8') as f:
                 text = f.read()
             
-            # Split by common chapter markers — any word followed by a digit,
-            # or kanji numerals + chapter indicator (for Japanese/Chinese).
-            # \w matches Latin letters AND CJK chars in Python 3 Unicode mode.
-            # \d matches ASCII, fullwidth, and other Unicode digits.
-            # [一二三四五六七八九十百千万]+ covers traditional Chinese/Japanese numerals.
-            chapter_pattern = r'(?:\w+\s*\d+|\d+[\.、]|[一二三四五六七八九十百千万]+[章回部巻])'
+            # Split by common chapter markers
+            chapter_pattern = r'(Chapter\s+\d+|CHAPTER\s+\d+|Chapter\s+[IVXLCDM]+)'
             chapters = re.split(chapter_pattern, text)
             
             chunks = []
@@ -763,23 +757,19 @@ class EbookParser:
             raise ValueError(f"Error parsing PDF with images: {str(e)}")
     
     def _is_valid_text_chunk(self, text: str) -> bool:
-        r"""
+        """
         Check if a text chunk has enough actual words/letters to generate audio.
         Filters out chunks that are only punctuation, whitespace, or symbols.
-
-        Uses \W+ (non-word chars in Python 3) which strips spaces/punctuation but keeps
-        all Unicode letter scripts — Latin, CJK (kanji/hanzi), Hiragana, Katakana,
-        Cyrillic, Greek, Arabic, Devanagari, Thai, Hangul, and more.
-        No hardcoded character ranges needed.
         """
         if not text:
             return False
         
-        # Remove non-word chars (\W strips spaces/punctuation, keeps all Unicode letters)
-        content = re.sub(r'\W+', '', text)
+        # Remove all punctuation, whitespace, and common symbols
+        # Keep only actual letters and numbers
+        letters_only = re.sub(r'[^a-zA-Z0-9\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', '', text)
         
         # Must have at least 2 actual characters to be speakable
-        return len(content) >= 2
+        return len(letters_only) >= 2
     
     def _split_oversized_chunk(self, text: str, max_chars: int = 500) -> list[str]:
         """

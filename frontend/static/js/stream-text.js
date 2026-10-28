@@ -252,31 +252,26 @@ async function loadChunksAround(centerChunk, radius = 25) {
     let scrollAnchorIndex = null;
     let scrollAnchorOffset = 0;
 
-    // Capture current viewport state BEFORE any DOM changes (guard against null)
-    if (textDisplay) {
-        const visibleChunks = Array.from(textDisplay.querySelectorAll('.chunk-container'))
-            .filter(el => {
-                const rect = el.getBoundingClientRect();
-                const containerRect = textDisplay.getBoundingClientRect();
-                return rect.top < containerRect.bottom && rect.bottom > containerRect.top;
-            });
+    const visibleChunks = Array.from(textDisplay.querySelectorAll('.chunk-container'))
+        .filter(el => {
+            const rect = el.getBoundingClientRect();
+            const containerRect = textDisplay.getBoundingClientRect();
+            return rect.top < containerRect.bottom && rect.bottom > containerRect.top;
+        });
 
-        if (visibleChunks.length > 0) {
-            const topVisible = visibleChunks[0];
-            scrollAnchorIndex = parseInt(topVisible.dataset.chunkIndex);
-            scrollAnchorOffset = topVisible.getBoundingClientRect().top - textDisplay.getBoundingClientRect().top;
-        }
+    if (visibleChunks.length > 0) {
+        const topVisible = visibleChunks[0];
+        scrollAnchorIndex = parseInt(topVisible.dataset.chunkIndex);
+        scrollAnchorOffset = topVisible.getBoundingClientRect().top - textDisplay.getBoundingClientRect().top;
     }
 
     const existingChunks = new Set();
     const existingElements = new Map();
-    if (textDisplay) {
-        textDisplay.querySelectorAll('.chunk-container').forEach(chunk => {
-            const idx = parseInt(chunk.dataset.chunkIndex);
-            existingChunks.add(idx);
-            existingElements.set(idx, chunk);
-        });
-    }
+    textDisplay.querySelectorAll('.chunk-container').forEach(chunk => {
+        const idx = parseInt(chunk.dataset.chunkIndex);
+        existingChunks.add(idx);
+        existingElements.set(idx, chunk);
+    });
 
     for (const [idx, element] of existingElements) {
         if (Math.abs(idx - centerChunk) > radius * LOAD.CLEANUP_MULT) {
@@ -307,8 +302,7 @@ async function loadChunksAround(centerChunk, radius = 25) {
         }
     }
 
-    // Restore scroll position after DOM changes to maintain user's reading context
-    if (scrollAnchorIndex !== null && textDisplay) {
+    if (scrollAnchorIndex !== null) {
         const anchorElement = document.querySelector(`.chunk-container[data-chunk-index="${scrollAnchorIndex}"]`);
         if (anchorElement) {
             const currentOffset = anchorElement.getBoundingClientRect().top - textDisplay.getBoundingClientRect().top;
@@ -319,24 +313,19 @@ async function loadChunksAround(centerChunk, radius = 25) {
         }
     }
 
-    // Load content in parallel batches for better performance during playback
     const chunksToLoad = [];
-    if (textDisplay) {
-        for (let i = startChunk; i <= endChunk; i++) {
-            const chunkDiv = textDisplay.querySelector(`.chunk-container[data-chunk-index="${i}"]`);
-            if (chunkDiv?.dataset.loaded === 'false' && !state.loadingChunks.has(i)) {
-                chunksToLoad.push(i);
-            }
+    for (let i = startChunk; i <= endChunk; i++) {
+        const chunkDiv = textDisplay.querySelector(`.chunk-container[data-chunk-index="${i}"]`);
+        if (chunkDiv?.dataset.loaded === 'false' && !state.loadingChunks.has(i)) {
+            chunksToLoad.push(i);
         }
     }
 
-    // Sort by proximity to center and load in parallel batches
     chunksToLoad.sort((a, b) => Math.abs(a - centerChunk) - Math.abs(b - centerChunk));
 
     for (let i = 0; i < chunksToLoad.length; i += LOAD.BATCH) {
         const batch = chunksToLoad.slice(i, i + LOAD.BATCH);
-        // Load each chunk in parallel within the batch instead of sequential await
-        await Promise.all(batch.map(idx => loadChunksBatch([idx]).catch(() => {})));
+        await loadChunksBatch(batch);
     }
 }
 
@@ -473,55 +462,7 @@ async function jumpToChunk(chunkIndex) {
     state.isUserStopping = false;
 
     if (wasPlaying && state.audioPlaybackId === thisPlaybackId) {
-        // Proactively prefetch audio for nearby chunks BEFORE resuming playback
-        // so that when playNextSegment runs, the current chunk is likely already cached
-        _log('[STREAM] Prefetching audio around jump target before resuming');
-        try { await prefetchAudioForRange(chunkIndex); } catch(e) {}
-        
-        // Small delay to let prefetched chunks settle into cache
-        await new Promise(r => setTimeout(r, 50));
-        
         try { await playNextSegment(true); } catch(e2) {}
-    }
-}
-
-/** Prefetch audio for a range of chunks around target position */
-async function prefetchAudioForRange(centerChunkIndex, radius = 10) {
-    const startIdx = Math.max(0, centerChunkIndex - radius);
-    const endIdx = Math.min(state.book.total_chunks - 1, centerChunkIndex + radius);
-    
-    _log(`[STREAM] Prefetching audio for chunks ${startIdx}-${endIdx}`);
-    
-    // Load in parallel batches instead of sequential await
-    const promises = [];
-    for (let i = startIdx; i <= endIdx; i++) {
-        const chunk = state.book.chunks[i];
-        if (!chunk) continue;
-        
-        const cacheKey = chunk._content_hash || `idx-${i}`;
-        // Skip chunks already in cache or currently being fetched
-        if (state.audioCache.has(cacheKey) || state.prefetchInFlight.has(cacheKey)) {
-            _log(`[STREAM] Skipping cached/prefetched chunk ${i} (${cacheKey})`);
-            continue;
-        }
-        
-        // Start fetch for this audio chunk in parallel
-        promises.push(
-            generateAudio(chunk.start_idx, chunk.end_idx, false, i)
-                .then(() => state.prefetchInFlight.delete(cacheKey))
-                .catch(e => {
-                    _log(`[STREAM] Prefetch failed for chunk ${i}:`, e.message);
-                    state.prefetchInFlight.delete(cacheKey);
-                })
-        );
-    }
-    
-    if (promises.length > 0) {
-        // Wait for all prefetches to complete
-        await Promise.all(promises);
-        _log(`[STREAM] Prefetch complete: ${state.audioCache.size} chunks in audio cache`);
-    } else {
-        _log('[STREAM] No new audio needs pre-fetching');
     }
 }
 
@@ -576,20 +517,13 @@ async function scrollToCurrentChunk() {
         }
     }
 
-    // If chunk isn't loaded yet, load it but don't block scrolling on this
-    let contentLoaded = false;
     if (currentChunk.dataset.loaded === 'false') {
-        await loadSingleChunk(state.currentChunk).catch(() => {});
+        await loadSingleChunk(state.currentChunk);
         currentChunk = document.querySelector(`.chunk-container[data-chunk-index="${state.currentChunk}"]`);
-        contentLoaded = true;
     }
 
     if (currentChunk) {
         performScroll(currentChunk);
-    } else if (contentLoaded && !state.isPlaying) {
-        // If we loaded the chunk during scroll but it still isn't visible,
-        // try scrolling again without the content loading delay
-        scrollToCurrentChunk();
     }
 }
 
