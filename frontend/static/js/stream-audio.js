@@ -1,6 +1,124 @@
 // Audio playback, controls, caching, and prefetching
 // Depends on: stream-state.js (state, DOM, API_BASE, log, etc.)
 
+let audioContext = null;
+
+function isIOSMediaMode() {
+    const userAgent = navigator.userAgent || '';
+    const platform = navigator.platform || '';
+    return /iPad|iPhone|iPod/.test(userAgent) ||
+        (platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function getAudioContext() {
+    if (!audioContext || audioContext.state === 'closed') {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return null;
+        audioContext = new AudioContextClass();
+    }
+    return audioContext;
+}
+
+async function resumeAudioContext() {
+    const context = getAudioContext();
+    if (!context) return null;
+    if (context.state === 'suspended') await context.resume();
+    return context.state === 'running' ? context : null;
+}
+
+function canUseWebAudio() {
+    return !isIOSMediaMode() && !document.hidden &&
+        !!(window.AudioContext || window.webkitAudioContext);
+}
+
+function getAudioCacheKey(chunkIndex) {
+    const chunk = state.book?.chunks?.[chunkIndex];
+    return chunk?._content_hash || `idx-${chunkIndex}`;
+}
+
+function revokeMediaPrefetch(cacheKey) {
+    const entry = state.mediaPrefetchCache.get(cacheKey);
+    if (!entry) return;
+    try { entry.element.removeAttribute('src'); entry.element.load(); } catch (e) {}
+    try { URL.revokeObjectURL(entry.url); } catch (e) {}
+    state.mediaPrefetchCache.delete(cacheKey);
+}
+
+function isPooledMediaUrl(url) {
+    for (const entry of state.mediaPrefetchCache.values()) {
+        if (entry.url === url) return true;
+    }
+    return false;
+}
+
+function warmMediaElement(cacheKey, audioBlob) {
+    if (state.mediaPrefetchCache.has(cacheKey)) return;
+    const element = document.createElement('audio');
+    element.preload = 'auto';
+    element.playsInline = true;
+    const url = URL.createObjectURL(audioBlob);
+    element.src = url;
+    element.load();
+    state.mediaPrefetchCache.set(cacheKey, { element, url });
+    element.addEventListener('error', () => {
+        if (state.mediaPrefetchCache.get(cacheKey)?.element === element) {
+            revokeMediaPrefetch(cacheKey);
+        }
+    }, { once: true });
+    log('media-prefetch-start', cacheKey);
+}
+
+async function decodeAudioBlob(cacheKey, audioBlob) {
+    if (state.audioBufferCache.has(cacheKey)) return state.audioBufferCache.get(cacheKey);
+    if (!canUseWebAudio()) return null;
+
+    const existing = state.audioDecodeInFlight.get(cacheKey);
+    if (existing) return existing;
+
+    const decodePromise = (async () => {
+        const context = await resumeAudioContext();
+        if (!context) return null;
+        log('audio-decode-start', cacheKey);
+        const decoded = await context.decodeAudioData(await audioBlob.arrayBuffer());
+        state.audioBufferCache.set(cacheKey, decoded);
+        log('audio-decode-finished', cacheKey);
+        return decoded;
+    })();
+
+    state.audioDecodeInFlight.set(cacheKey, decodePromise);
+    try {
+        return await decodePromise;
+    } catch (error) {
+        logError(`Audio decode failed for ${cacheKey}`, error);
+        return null;
+    } finally {
+        state.audioDecodeInFlight.delete(cacheKey);
+    }
+}
+
+async function prepareAudio(cacheKey, audioBlob) {
+    if (isIOSMediaMode() || document.hidden) {
+        warmMediaElement(cacheKey, audioBlob);
+        return null;
+    }
+    return decodeAudioBlob(cacheKey, audioBlob);
+}
+
+function stopWebAudioSource() {
+    const segment = state.currentAudioSegment;
+    if (!segment?.source) return;
+    try { segment.source.onended = null; segment.source.stop(); } catch (e) {}
+    try { segment.source.disconnect(); } catch (e) {}
+    segment.source = null;
+}
+
+function getWebAudioOffset(segment) {
+    const context = getAudioContext();
+    if (!context || segment?.startedAt == null) return segment?.offset || 0;
+    const speed = segment.playbackRate || 1;
+    return Math.min(segment.duration, (context.currentTime - segment.startedAt) * speed + (segment.offset || 0));
+}
+
 // ========== AUDIO PLAYER SETUP ==========
 function setupAudioPlayer() {
     const audio = DOM.audio;
@@ -47,7 +165,7 @@ function setupAudioPlayer() {
 
             // Clean up old source and set next chunk.
             try { audio.pause(); } catch (e2) {}
-            if (state.currentAudioBlobUrl) {
+            if (state.currentAudioBlobUrl && !isPooledMediaUrl(state.currentAudioBlobUrl)) {
                 URL.revokeObjectURL(state.currentAudioBlobUrl);
                 state.currentAudioBlobUrl = null;
             }
@@ -98,6 +216,7 @@ function setupAudioPlayer() {
 
     audio.addEventListener('pause', () => {
         // Browser fired pause during playback — stop unless we're actively generating.
+        if (state.currentAudioSegment?.mode === 'web-audio') return;
         if (state.isPlaying && !state.isGeneratingAudio) {
             state.isPlaying = false;
             updatePlayButton();
@@ -113,6 +232,7 @@ function setupAudioPlayer() {
 
     audio.addEventListener('loadeddata', async () => {
         if (audio.error) return;  // Element has error — don't try to play.
+        if (state.currentAudioSegment?.mode === 'web-audio') return;
 
         if (state.isPlaying && audio.paused) {
             const thisPlaybackId = state.audioPlaybackId;
@@ -129,6 +249,25 @@ function setupAudioPlayer() {
             }
         }
     });
+
+    document.addEventListener('visibilitychange', async () => {
+        const segment = state.currentAudioSegment;
+        if (!document.hidden || segment?.mode !== 'web-audio' || !state.isPlaying) return;
+
+        const offset = getWebAudioOffset(segment);
+        const cacheKey = getAudioCacheKey(segment.chunkIndex);
+        const audioBlob = state.audioCache.get(cacheKey);
+        stopWebAudioSource();
+        if (!audioBlob) return;
+
+        state.audioOutputMode = 'media-element';
+        try {
+            await playMediaChunk(segment.chunkIndex, cacheKey, audioBlob, segment.playbackId, offset);
+            log('audio-output-mode-changed', 'media-element');
+        } catch (error) {
+            logError('Failed to switch Web Audio playback to media element', error);
+        }
+    });
 }
 
 function startAudioWatchdog() {
@@ -137,7 +276,8 @@ function startAudioWatchdog() {
         const audio = DOM.audio;
 
         // Guard: don't run watchdog if element is in error state.
-        if (!audio || !state.isPlaying || audio.error || state.isGeneratingAudio) return;
+        if (!audio || !state.isPlaying || audio.error || state.isGeneratingAudio ||
+            state.currentAudioSegment?.mode === 'web-audio') return;
 
         const audioMatchesCurrentChunk = state.currentAudioSegment?.chunkIndex === state.currentChunk;
         if (audio?.src && audioMatchesCurrentChunk) {
@@ -153,6 +293,7 @@ function startAudioWatchdog() {
 async function handleChunkTransition() {
     const audio = DOM.audio;
     if (!state.isPlaying || !audio?.src || state.isTransitioning) return;
+    if (state.currentAudioSegment?.mode === 'web-audio') return;
 
     // Guard: don't transition if element is in error state.
     if (audio.error) {
@@ -208,6 +349,7 @@ async function startPlaying() {
     updatePlayButton();
 
     try {
+        await resumeAudioContext();
         await loadChunksAround(state.currentChunk, LOAD.RADIUS);
         if (state.isPlaying && !state.isGeneratingAudio) {  // Verify still valid after loading.
             await playNextSegment(true);
@@ -226,7 +368,15 @@ async function pausePlaying() {
     state.isPlaying = false;
     state.isGeneratingAudio = false;
     updatePlayButton();
-    try { DOM.audio.pause(); } catch(e) {}
+    if (state.currentAudioSegment?.mode === 'web-audio') {
+        state.currentAudioSegment.offset = getWebAudioOffset(state.currentAudioSegment);
+        stopWebAudioSource();
+    } else {
+        if (state.currentAudioSegment) {
+            state.currentAudioSegment.offset = DOM.audio.currentTime || 0;
+        }
+        try { DOM.audio.pause(); } catch(e) {}
+    }
     await saveProgress();
 }
 
@@ -243,26 +393,119 @@ async function stopPlaying() {
     updatePlayButton();
 
     const audio = DOM.audio;
+    stopWebAudioSource();
     try { audio.pause(); } catch(e) {}
     if (audio && !state.currentAudioBlobUrl) {
         audio.src = '';  // Only clear src if we don't own the blob URL.
     }
 
-    if (state.currentAudioBlobUrl) {
+    if (state.currentAudioBlobUrl && !isPooledMediaUrl(state.currentAudioBlobUrl)) {
         try { URL.revokeObjectURL(state.currentAudioBlobUrl); } catch(e) {}
         state.currentAudioBlobUrl = null;
     }
 
-    if (state.currentAudioSegment?.url && state.currentAudioSegment.url !== state.currentAudioBlobUrl) {
+    if (state.currentAudioSegment?.url && state.currentAudioSegment.url !== state.currentAudioBlobUrl &&
+        !isPooledMediaUrl(state.currentAudioSegment.url)) {
         try { URL.revokeObjectURL(state.currentAudioSegment.url); } catch(e) {}
     }
 
     state.currentAudioSegment = null;
+    state.audioOutputMode = 'media-element';
     state.hasShownErrorAlert = false;  // Reset so user can retry cleanly.
 }
 
-async function playCurrentChunk() {
+async function playWebAudioChunk(chunkIndex, cacheKey, decoded, playbackId, offset = 0) {
+    let context;
+    try {
+        context = await resumeAudioContext();
+    } catch (error) {
+        logError('Unable to resume Web Audio context; using media fallback', error);
+        return false;
+    }
+    if (!context || !state.isPlaying || state.audioPlaybackId !== playbackId) return false;
+
     const audio = DOM.audio;
+    try { audio.pause(); } catch (e) {}
+    stopWebAudioSource();
+
+    const source = context.createBufferSource();
+    source.buffer = decoded;
+    source.playbackRate.value = parseFloat(DOM.speedControl.value);
+    const duration = decoded.duration;
+    const startOffset = Math.min(Math.max(0, offset), Math.max(0, duration - 0.001));
+    const segment = {
+        chunkIndex,
+        mode: 'web-audio',
+        source,
+        buffer: decoded,
+        playbackId,
+        startedAt: context.currentTime,
+        offset: startOffset,
+        duration,
+        playbackRate: source.playbackRate.value
+    };
+    source.connect(context.destination);
+    source.onended = () => {
+        if (state.currentAudioSegment !== segment || !state.isPlaying ||
+            state.audioPlaybackId !== playbackId) return;
+        if (state.currentChunk >= state.book.total_chunks - 1) {
+            stopPlaying();
+            showToast('Finished reading the book! 📚');
+            return;
+        }
+        state.currentChunk++;
+        saveProgress();
+        playNextSegment().catch(error => logError('Web Audio transition failed', error));
+    };
+    state.currentAudioSegment = segment;
+    state.audioOutputMode = 'web-audio';
+    source.start(0, segment.offset);
+    log('web-audio-source-started', cacheKey);
+    return true;
+}
+
+async function playMediaChunk(chunkIndex, cacheKey, audioBlob, playbackId, offset = 0) {
+    const audio = DOM.audio;
+    if (!state.isPlaying || state.audioPlaybackId !== playbackId) return false;
+
+    stopWebAudioSource();
+    if (state.currentAudioBlobUrl && !isPooledMediaUrl(state.currentAudioBlobUrl)) {
+        URL.revokeObjectURL(state.currentAudioBlobUrl);
+    }
+
+    const pooled = state.mediaPrefetchCache.get(cacheKey);
+    const audioUrl = pooled?.url || URL.createObjectURL(audioBlob);
+    state.currentAudioBlobUrl = audioUrl;
+    state.currentAudioSegment = {
+        chunkIndex,
+        mode: 'media-element',
+        url: audioUrl,
+        playbackId
+    };
+    state.audioOutputMode = 'media-element';
+
+    audio.src = audioUrl;
+    audio.playbackRate = parseFloat(DOM.speedControl.value);
+    if (offset > 0) {
+        const setOffset = () => {
+            try { audio.currentTime = offset; } catch (e) {}
+        };
+        if (audio.readyState >= 1) setOffset();
+        else audio.addEventListener('loadedmetadata', setOffset, { once: true });
+    }
+
+    try {
+        await audio.play();
+    } catch (err) {
+        const errName = err?.name || '';
+        const errMsg = err?.message || String(err);
+        if (!(errMsg.includes('AbortError') || errMsg.includes('NotAllowed') ||
+              errMsg.includes('abort') || errName === 'AbortError')) throw err;
+    }
+    return true;
+}
+
+async function playCurrentChunk() {
     if (!state.isPlaying) return;
 
     // CAS: Capture playback ID at entry — if someone else moved past us, bail.
@@ -273,7 +516,7 @@ async function playCurrentChunk() {
     if (!chunk) throw new Error(`No chunk found at index ${state.currentChunk}`);
 
     // CAS: use content hash as stable key (falls back to index if no hash)
-    const cacheKey = chunk._content_hash || `idx-${state.currentChunk}`;
+    const cacheKey = getAudioCacheKey(state.currentChunk);
 
     let audioBlob;
     if (state.audioCache.has(cacheKey)) {
@@ -282,6 +525,8 @@ async function playCurrentChunk() {
         audioBlob = await generateAudio(chunk.start_idx, chunk.end_idx);
         state.audioCache.set(cacheKey, audioBlob);
     }
+    const decoded = state.audioBufferCache.get(cacheKey) ||
+        await decodeAudioBlob(cacheKey, audioBlob);
 
     // CAS: verify we're still the active playback before committing.
     if (state.audioPlaybackId !== thisPlaybackId || !state.isPlaying) {
@@ -289,33 +534,9 @@ async function playCurrentChunk() {
         return;
     }
 
-    if (state.currentAudioBlobUrl) {
-        URL.revokeObjectURL(state.currentAudioBlobUrl);
-    }
-
-    const audioUrl = URL.createObjectURL(audioBlob);
-    state.currentAudioBlobUrl = audioUrl;
-    state.currentAudioSegment = {
-        chunkIndex: state.currentChunk,
-        url: audioUrl,
-        playbackId: thisPlaybackId  // Use captured ID, not current one.
-    };
-
-    audio.src = audioUrl;
-    audio.playbackRate = parseFloat(DOM.speedControl.value);
-
-    try {
-        await audio.play();
-    } catch (err) {
-        const errName = err?.name || '';
-        const errMsg = err?.message || String(err);
-        // These are expected in some contexts — don't treat as hard failures.
-        if (!(errMsg.includes('AbortError') || errMsg.includes('NotAllowed') ||
-              errMsg.includes('abort') || errName === 'AbortError')) {
-            log(`playCurrentChunk.play() error: ${errMsg}`);
-            throw err; // Re-throw so the caller can handle it.
-        }
-    }
+    if (decoded && canUseWebAudio() &&
+        await playWebAudioChunk(state.currentChunk, cacheKey, decoded, thisPlaybackId)) return;
+    await playMediaChunk(state.currentChunk, cacheKey, audioBlob, thisPlaybackId);
 }
 
 async function playNextSegment(shouldPlay = false) {
@@ -339,17 +560,28 @@ async function playNextSegment(shouldPlay = false) {
         state.isGeneratingAudio = true;
         const chunk = state.book.chunks[state.currentChunk];
         // CAS: use content hash as stable key (falls back to index if no hash)
-        const cacheKey = chunk._content_hash || `idx-${state.currentChunk}`;
+        const cacheKey = getAudioCacheKey(state.currentChunk);
+        const resumeOffset = state.currentAudioSegment?.mode === 'web-audio' &&
+            state.currentAudioSegment.chunkIndex === state.currentChunk
+            ? state.currentAudioSegment.offset || 0
+            : state.currentAudioSegment?.mode === 'media-element' &&
+                state.currentAudioSegment.chunkIndex === state.currentChunk
+                ? state.currentAudioSegment.offset || 0
+                : 0;
 
-        const audio = DOM.audio;
         if (state.currentAudioSegment && state.currentAudioSegment.chunkIndex !== state.currentChunk) {
-            try { audio.pause(); } catch(e2) {}
-            audio.currentTime = 0;
+            if (state.currentAudioSegment.mode === 'web-audio') stopWebAudioSource();
+            else {
+                try { DOM.audio.pause(); } catch(e2) {}
+                DOM.audio.currentTime = 0;
+            }
         }
 
         if (!state.audioCache.has(cacheKey)) showAudioStatus('Generating audio...');
 
         const audioBlob = await generateAudio(chunk.start_idx, chunk.end_idx);
+        const decoded = state.audioBufferCache.get(cacheKey) ||
+            await decodeAudioBlob(cacheKey, audioBlob);
         hideAudioStatus();
         state.isGeneratingAudio = false;
 
@@ -359,27 +591,9 @@ async function playNextSegment(shouldPlay = false) {
             return;
         }
 
-        if (state.currentAudioBlobUrl) {
-            URL.revokeObjectURL(state.currentAudioBlobUrl);
-        }
-
-        const audioUrl = URL.createObjectURL(audioBlob);
-        state.currentAudioBlobUrl = audioUrl;
-        state.currentAudioSegment = {
-            chunkIndex: state.currentChunk,
-            url: audioUrl,
-            playbackId: thisPlaybackId
-        };
-
-        audio.src = audioUrl;
-        audio.playbackRate = parseFloat(DOM.speedControl.value);
-
-        try {
-            await audio.play();
-        } catch (err) {
-            // Audio play failed — let the error event handler deal with recovery.
-            _log(`[STREAM] audio.play() threw in playNextSegment: ${err?.message || err}`);
-            // Don't set hasShownErrorAlert here; only show alert if all retries exhaust.
+        if (!(decoded && canUseWebAudio() &&
+            await playWebAudioChunk(state.currentChunk, cacheKey, decoded, thisPlaybackId, resumeOffset))) {
+            await playMediaChunk(state.currentChunk, cacheKey, audioBlob, thisPlaybackId, resumeOffset);
         }
 
         highlightCurrentChunk();
@@ -431,7 +645,9 @@ async function generateAudio(startChar, endChar, useCache = true, forChunkIndex 
     }
     if (useCache && state.audioCache.has(cacheKey)) {
         logCache('Hit:', cacheKey);
-        return state.audioCache.get(cacheKey);
+        const cachedBlob = state.audioCache.get(cacheKey);
+        await prepareAudio(cacheKey, cachedBlob);
+        return cachedBlob;
     }
 
     const controller = new AbortController();
@@ -459,6 +675,7 @@ async function generateAudio(startChar, endChar, useCache = true, forChunkIndex 
 
         const audioBlob = await res.blob();
         state.audioCache.set(cacheKey, audioBlob);
+        await prepareAudio(cacheKey, audioBlob);
         logCache(`Stored audio, cache size: ${state.audioCache.size}`);
 
         if (state.audioCache.size > CACHE.MAX_SIZE) {
@@ -493,6 +710,9 @@ function cleanupAudioCache(centerChunkIndex) {
         const chunkIndex = chunkMap.get(key);
         if (chunkIndex !== undefined && (chunkIndex < minKeep || chunkIndex > maxKeep)) {
             state.audioCache.delete(key);
+            state.audioBufferCache.delete(key);
+            state.audioDecodeInFlight.delete(key);
+            revokeMediaPrefetch(key);
             logCache(`Evicted chunk ${chunkIndex} (keeping ${minKeep}-${maxKeep})`);
         }
     }
@@ -509,7 +729,14 @@ function prefetchAudio(startChunkIndex, count = CACHE.SIZE) {
         // CAS: use content hash as stable key (falls back to index if no hash)
         const cacheKey = chunk._content_hash || `idx-${chunkIndex}`;
 
-        if (state.audioCache.has(cacheKey) || state.prefetchInFlight.has(cacheKey)) continue;
+        if (state.audioCache.has(cacheKey) || state.prefetchInFlight.has(cacheKey)) {
+            if (state.audioCache.has(cacheKey)) {
+                prepareAudio(cacheKey, state.audioCache.get(cacheKey)).catch(error => {
+                    logError(`Audio prefetch preparation failed for ${cacheKey}`, error);
+                });
+            }
+            continue;
+        }
         if (state.prefetchInFlight.size >= CACHE.CONCURRENCY) break;
 
         state.prefetchInFlight.add(cacheKey);
@@ -549,6 +776,11 @@ function changeSpeed() {
     if (audio) {
         audio.playbackRate = parseFloat(DOM.speedControl.value);
     }
+    if (state.currentAudioSegment?.mode === 'web-audio') {
+        const rate = parseFloat(DOM.speedControl.value);
+        state.currentAudioSegment.source.playbackRate.value = rate;
+        state.currentAudioSegment.playbackRate = rate;
+    }
     updateProgress();
 }
 
@@ -561,7 +793,7 @@ function clearAudioCache() {
         body: JSON.stringify({ ebook_path: EBOOK_PATH })
     })
     .then(() => {
-        state.audioCache.clear();
+        clearInMemoryAudioCaches();
         showToast('Cache cleared');
         refreshCacheStatus();
     })
@@ -569,6 +801,13 @@ function clearAudioCache() {
         showToast('Error clearing cache: ' + err.message);
         console.error('Cache clear error:', err);
     });
+}
+
+function clearInMemoryAudioCaches() {
+    state.audioCache.clear();
+    state.audioBufferCache.clear();
+    state.audioDecodeInFlight.clear();
+    for (const key of Array.from(state.mediaPrefetchCache.keys())) revokeMediaPrefetch(key);
 }
 
 function skipAudioGeneration() {

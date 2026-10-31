@@ -41,9 +41,11 @@ window.addEventListener('beforeunload', () => {
         if (el && el.parentNode) el.remove();
     }
     
-    if (state.currentAudioBlobUrl) URL.revokeObjectURL(state.currentAudioBlobUrl);
+    if (state.currentAudioBlobUrl && !isPooledMediaUrl(state.currentAudioBlobUrl)) {
+        URL.revokeObjectURL(state.currentAudioBlobUrl);
+    }
     if (state.chunkObserver) { state.chunkObserver.disconnect(); state.chunkObserver = null; }
-    state.audioCache.clear();
+    clearInMemoryAudioCaches();
     state.inFlightControllers.forEach(c => { try { c.abort(); } catch (e) { } });
     state.inFlightControllers.clear();
 });
@@ -768,7 +770,7 @@ function toggleUseCachedAudio() {
         showToast('Using cached audio — chunks will be served from disk when available', 3000);
     } else {
         // Clear in-memory cache so previously fetched blobs aren't reused
-        state.audioCache.clear();
+        clearInMemoryAudioCaches();
         showToast('Fresh TTS only — no cache lookups, always generating new audio', 3000);
     }
     saveSettingsToServer();
@@ -879,11 +881,11 @@ async function shutdownAndNavigate(targetHref) {
     state.inFlightControllers.forEach(c => { try { c.abort(); } catch (e) { } });
     state.inFlightControllers.clear();
 
-    if (state.currentAudioBlobUrl) {
+    if (state.currentAudioBlobUrl && !isPooledMediaUrl(state.currentAudioBlobUrl)) {
         try { URL.revokeObjectURL(state.currentAudioBlobUrl); } catch (e) { }
         state.currentAudioBlobUrl = null;
     }
-    state.audioCache.clear();
+    clearInMemoryAudioCaches();
 
     setTimeout(() => window.location.href = targetHref, 50);
 }
