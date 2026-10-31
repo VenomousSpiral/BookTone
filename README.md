@@ -106,7 +106,7 @@ Web-Audio-Book-Reader/
 │       ├── path_utils.py                # Path sanitization & cache directory resolution
 │       └── validators.py                # Input validation helpers
 ├── frontend/                            # Web UI
-│   ├── static/js/                       # Vanilla JS modules (8 files, ES module pattern)
+│   ├── static/js/                       # Vanilla JS feature scripts loaded in dependency order
 │   │   ├── app.js                       # Main entry point + tab navigation
 │   │   ├── file-manager.js              # E-book upload/listing/drag-drop UI logic (45KB)
 │   │   ├── stream-audio.js              # Audio player controls & playback
@@ -117,7 +117,8 @@ Web-Audio-Book-Reader/
 │   │   └── stream.js                    # Streaming orchestration helpers
 │   ├── static/themes/                   # 18 color themes as JSON files
 │   ├── templates/index.html             # Main page template (tabbed interface)
-│   └── templates/stream.html            # Streaming player page template
+│   ├── static/css/stream.css             # Streaming-player styles
+│   └── templates/stream.html             # Streaming player page template
 ├── docker/                              # Docker Compose setup + backend Dockerfile
 ├── storage/                             # Runtime data (auto-created on startup)
 │   ├── app.db                           # SQLite database: profiles, bookmarks, settings_kv
@@ -448,6 +449,12 @@ cd backend && pytest -v
 
 # Run specific test file
 pytest tests/test_routes.py -v
+
+# Run the frontend suite (Node 18+; no npm install required)
+npm run test:frontend
+
+# Check frontend JavaScript syntax
+npm run check:frontend
 ```
 
 Test files:
@@ -455,6 +462,7 @@ Test files:
 - `backend/tests/test_services.py` — Service layer unit tests
 - `backend/tests/test_validators.py` — Input validation coverage
 - `backend/tests/test_path_utils.py` — Path traversal protection tests
+- `frontend/tests/frontend.test.mjs` — Frontend behavior, DOM actions, sorting, escaping, and template invariants
 
 ---
 

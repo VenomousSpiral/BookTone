@@ -18,17 +18,7 @@ from app.core.config import settings
 #  output from the ebook parser.                                     #
 #  To enable: set level to logging.DEBUG (default is WARNING).       #
 # ------------------------------------------------------------------ #
-_EBOOK_PARSER_DEBUG = True  # <-- Set to False to disable all debug logs
-if _EBOOK_PARSER_DEBUG:
-    _logger = logging.getLogger("ebook_parser")
-    _logger.setLevel(logging.DEBUG)
-    if not _logger.handlers:
-        _handler = logging.StreamHandler()
-        _handler.setLevel(logging.DEBUG)
-        _logger.addHandler(_handler)
-else:
-    _logger = logging.getLogger("ebook_parser")
-    _logger.setLevel(logging.WARNING)
+_logger = logging.getLogger("ebook_parser")
 
 class EbookParser:
     """Parse ebooks and extract text content"""

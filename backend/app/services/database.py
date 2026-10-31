@@ -1,6 +1,8 @@
 """SQLite database connection and schema management."""
 import logging
+from contextlib import contextmanager
 from pathlib import Path
+from collections.abc import Iterator
 
 import sqlite3
 from app.core.config import settings
@@ -84,8 +86,9 @@ CREATE TABLE IF NOT EXISTS migration_log (
 """
 
 
-def _get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
+def _get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     """Get a new SQLite connection with WAL mode and foreign keys enabled."""
+    db_path = db_path or database_path()
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row  # dict-like row access by default
     conn.execute("PRAGMA journal_mode=WAL")
@@ -93,14 +96,38 @@ def _get_connection(db_path: Path = DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+def database_path() -> Path:
+    """Return the current application database path.
+
+    Resolving this lazily keeps tests and alternate deployments that replace
+    ``settings.STORAGE_DIR`` isolated from the import-time default.
+    """
+    return settings.STORAGE_DIR / "app.db"
+
+
+@contextmanager
+def connection(db_path: Path | None = None) -> Iterator[sqlite3.Connection]:
+    """Open a configured SQLite connection and close it reliably."""
+    conn = _get_connection(db_path or database_path())
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def init_db():
     """Create tables if they don't exist. Called at app startup."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = _get_connection()
+    db_path = database_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = _get_connection(db_path)
     try:
         conn.executescript(SCHEMA_SQL)
         conn.commit()
-        logger.info("[DB] Schema initialized at %s", DB_PATH)
+        logger.info("[DB] Schema initialized at %s", db_path)
     except Exception as e:
         logger.error("[DB] Failed to initialize schema: %s", e)
         raise
@@ -110,4 +137,4 @@ def init_db():
 
 def get_connection(db_path: Path = None):
     """Public connection factory (used by migration and tests)."""
-    return _get_connection(db_path or DB_PATH)
+    return _get_connection(db_path or database_path())

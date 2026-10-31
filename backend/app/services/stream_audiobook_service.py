@@ -32,6 +32,10 @@ class StreamAudiobookService:
         # This prevents concurrent book generation from blocking the event loop entirely.
         self._io_executor = ThreadPoolExecutor(max_workers=4)
 
+    def close(self) -> None:
+        """Release worker threads when the application shuts down."""
+        self._io_executor.shutdown(wait=False, cancel_futures=True)
+
     def create_profile(self, ebook_path: str, model: str, voice: str) -> dict:
         """Create a new profile for an ebook/model/voice combo."""
         total_chunks = 0

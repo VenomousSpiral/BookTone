@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from app.core.config import settings
-from app.services.database import SCHEMA_SQL, DB_PATH
+from app.services.database import SCHEMA_SQL, database_path, get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class ProfileManager:
     def __init__(self, profiles_file: Path = None, db_path: Path = None):
         # Accept both old `profiles_file` (maps to db_path) and new `db_path`
         if db_path is None:
-            self.db_path = DB_PATH
+            self.db_path = database_path()
             if profiles_file is not None:
                 # Derive SQLite path from legacy JSON path for backward compat.
                 pfile = Path(profiles_file)
@@ -53,11 +53,7 @@ class ProfileManager:
     def _get_conn(self) -> sqlite3.Connection:
         """Fresh per-operation connection (thread-safe) with schema ensured."""
         db_path = Path(self.db_path)
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
+        conn = get_connection(db_path)
         if not self._table_exists(conn, "profiles"):
             conn.executescript(SCHEMA_SQL)
         return conn

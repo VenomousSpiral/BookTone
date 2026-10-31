@@ -2,6 +2,7 @@
 """Integration tests for the new job-based download system."""
 import sys, os, json, time
 from pathlib import Path
+import pytest
 
 sys.path.insert(0, '.')
 os.chdir(os.path.dirname(__file__)) or '.'  # Ensure we're in backend/
@@ -23,6 +24,12 @@ client = TestClient(app)
 EBOOK = os.environ.get('TEST_EBOOK', '')
 MODEL = os.environ.get('TEST_MODEL', 'OminiVoice')  
 VOICE = os.environ.get('TEST_VOICE', 'Narrator-UK')
+
+if not EBOOK:
+    pytest.skip(
+        'Set TEST_EBOOK to run download integration tests against a real ebook',
+        allow_module_level=True,
+    )
 
 
 def poll_until_complete(job_id, timeout=180):

@@ -6,7 +6,8 @@ const API_BASE = '/api';
 // ========== CONSOLIDATED STATE ==========
 const appState = {
     models: {},
-    editModel: null
+    editModel: null,
+    modalTrigger: null
 };
 
 // ========== HELPERS ==========
@@ -38,12 +39,22 @@ function renderBreadcrumb(container, path, onNavigate, rootLabel = '\uD83C\uDFE0
 
 /** Show a modal by ID */
 function showModal(id) {
-    document.getElementById(id).classList.add('active');
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    appState.modalTrigger = document.activeElement;
+    modal.classList.add('active');
+    modal.setAttribute('aria-hidden', 'false');
+    modal.querySelector('input, select, textarea, button')?.focus();
 }
 
 /** Hide a modal and optionally reset a form */
 function hideModal(id, formId = null) {
-    document.getElementById(id).classList.remove('active');
+    const modal = document.getElementById(id);
+    if (!modal) return;
+    modal.classList.remove('active');
+    modal.setAttribute('aria-hidden', 'true');
+    appState.modalTrigger?.focus?.();
+    appState.modalTrigger = null;
     if (formId) document.getElementById(formId).reset();
 }
 
@@ -151,11 +162,21 @@ function displayModels(models) {
                     ${model.base_url ? `<br>Base URL: ${esc(model.base_url)}` : ''}
                 </div>
             </div>
-            <div class="model-actions">
-                <button class="btn-small" onclick="showEditModelDialog('${escAttr(name)}')">✏️ Edit</button>
-                <button class="btn-small btn-danger" onclick="deleteModel('${escAttr(name)}')">🗑️ Delete</button>
-            </div>
         `;
+        const actions = document.createElement('div');
+        actions.className = 'model-actions';
+        const editButton = document.createElement('button');
+        editButton.className = 'btn-small';
+        editButton.type = 'button';
+        editButton.textContent = '✏️ Edit';
+        editButton.addEventListener('click', () => showEditModelDialog(name));
+        const deleteButton = document.createElement('button');
+        deleteButton.className = 'btn-small btn-danger';
+        deleteButton.type = 'button';
+        deleteButton.textContent = '🗑️ Delete';
+        deleteButton.addEventListener('click', () => deleteModel(name));
+        actions.append(editButton, deleteButton);
+        item.appendChild(actions);
         container.appendChild(item);
     }
 }
@@ -389,6 +410,26 @@ window.updateGenVoiceOptions = updateGenVoiceOptions;
 // ========== INITIALIZATION ==========
 
 document.addEventListener('DOMContentLoaded', () => {
+    bindActionHandlers({
+        click: {
+            'upload-file': () => document.getElementById('fileUpload')?.click(),
+            'create-directory': createDirectory,
+            'new-text-file': showCreateTextFileModal,
+            'add-model': showAddModelDialog,
+            'refresh-models': refreshModels,
+            'close-generate': closeGenerateModal,
+            'close-add-model': closeAddModelModal,
+            'close-edit-model': closeEditModelModal,
+            'close-create-text': closeCreateTextFileModal
+        },
+        input: {
+            'filter-files': filterFiles
+        },
+        change: {
+            'sort-files': sortFiles
+        }
+    });
+
     const urlParams = new URLSearchParams(window.location.search);
     const tab = urlParams.get('tab');
     const path = urlParams.get('path');

@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse, FileResponse
 from pathlib import Path
+import inspect
+import logging
 
 from app.api.routes import (
     files,
@@ -22,6 +24,8 @@ from app.api.routes import (
 )
 from app.services.database import init_db
 from app.services.migrate_from_json import migrate_if_needed
+
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 #  Lifespan: DB init + migration on startup                                   #
@@ -38,14 +42,12 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup on shutdown — close DB connections for all service singletons.
+    # Cleanup on shutdown — stop service-owned workers.
     try:
-        from app.services import stream_service as ss_mod
-        svc = getattr(getattr(ss_mod, 'stream_service', None), 'settings_service', None)
-        if svc is not None and hasattr(svc, 'close'):
-            svc.close()
+        from app.services.stream_audiobook_service import stream_audiobook_service
+        stream_audiobook_service.close()
     except Exception:
-        pass  # best-effort cleanup
+        logger.exception("Failed to shut down stream audiobook workers")
 
 
 app = FastAPI(
@@ -74,6 +76,20 @@ app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 templates_path = _project_root / "frontend" / "templates"
 templates = Jinja2Templates(directory=str(templates_path))
 
+def _template_response(request: Request, name: str, context: dict):
+    """Render a template across supported Starlette TemplateResponse APIs."""
+    parameters = inspect.signature(templates.TemplateResponse).parameters
+    if "request" in parameters:
+        return templates.TemplateResponse(
+            request=request,
+            name=name,
+            context=context,
+        )
+    return templates.TemplateResponse(
+        name,
+        {"request": request, **context},
+    )
+
 
 # ---- Route registration ----
 
@@ -92,15 +108,13 @@ app.include_router(preferences.router, prefix="/api/audiobooks", tags=["preferen
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request):
     """Serve the main web interface"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return _template_response(request, "index.html", {})
 
 
 @app.get("/stream", response_class=HTMLResponse)
 async def stream_page(request: Request, ebook: str = Query(...)):
     """Serve the streaming player interface"""
-    return templates.TemplateResponse(
-        "stream.html", {"request": request, "ebook_path": ebook}
-    )
+    return _template_response(request, "stream.html", {"ebook_path": ebook})
 
 
 @app.get("/test-performance", response_class=HTMLResponse)

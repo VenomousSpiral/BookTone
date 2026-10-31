@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict
 
 from app.core.config import settings
-from app.services.database import SCHEMA_SQL
+from app.services.database import SCHEMA_SQL, get_connection
 from app.models.streaming import StreamProgress
 
 logger = logging.getLogger(__name__)
@@ -23,11 +23,7 @@ class ProgressRepository:
         """Fresh per-operation connection; resolves the DB path at call time so
         tests that repoint ``settings.STORAGE_DIR`` keep working."""
         db_path = settings.STORAGE_DIR / "app.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(db_path))
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA foreign_keys=ON")
+        conn = get_connection(db_path)
         conn.executescript(SCHEMA_SQL)  # idempotent; single schema source
         return conn
 

@@ -45,7 +45,7 @@ async def start_download(
     ebook_path: str = Query(...),
     model: str = Query(...),
     voice: str = Query(...),
-    format_type: str = Query("opus", regex="^(opus|m4b|mp3)$"),
+    format_type: str = Query("opus", pattern="^(opus|m4b|mp3)$"),
 ):
     """Start a download conversion for the selected format.
 
@@ -584,4 +584,3 @@ async def download_source(ebook_path: str = Query(...)):
         if isinstance(e, HTTPException):
             raise
         raise HTTPException(status_code=500, detail=str(e))
-

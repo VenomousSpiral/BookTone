@@ -1,0 +1,9 @@
+{
+  "name": "booktone-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:frontend": "node --test frontend/tests/*.test.mjs",
+    "check:frontend": "for f in frontend/static/js/*.js; do node --check \"$f\" || exit 1; done"
+  }
+}

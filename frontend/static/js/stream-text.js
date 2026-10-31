@@ -44,10 +44,19 @@ async function loadAllChunks() {
 function createChunkElement(chunkIndex) {
     const div = document.createElement('div');
     div.className = 'chunk-container';
+    div.setAttribute('role', 'button');
+    div.setAttribute('tabindex', '0');
+    div.setAttribute('aria-label', `Jump to text chunk ${chunkIndex + 1}`);
     div.dataset.chunkIndex = chunkIndex;
     div.dataset.loaded = 'false';
     div.style.minHeight = '120px';
-    div.onclick = () => loadAndJumpToChunk(chunkIndex);
+    div.addEventListener('click', () => loadAndJumpToChunk(chunkIndex));
+    div.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            loadAndJumpToChunk(chunkIndex);
+        }
+    });
 
     if (isBookmarked(chunkIndex)) {
         div.classList.add('bookmarked');

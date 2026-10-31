@@ -23,3 +23,23 @@ function escAttr(value) {
         .replace(/\n/g, "\\n")
         .replace(/\r/g, "\\r");
 }
+
+/**
+ * Bind declarative data-action controls without putting behavior in templates.
+ * Maps receive the action name and the handler is called with the event target.
+ */
+function bindActionHandlers({ click = {}, change = {}, input = {} } = {}) {
+    const bind = (eventName, handlers) => {
+        document.addEventListener(eventName, (event) => {
+            const target = event.target instanceof Element
+                ? event.target.closest('[data-action]')
+                : null;
+            const handler = target && handlers[target.dataset.action];
+            if (handler) handler(event, target);
+        });
+    };
+
+    bind('click', click);
+    bind('change', change);
+    bind('input', input);
+}

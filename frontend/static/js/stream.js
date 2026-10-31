@@ -3,7 +3,51 @@
 
 // ========== INITIALIZATION ==========
 
+function bindStreamActions() {
+    bindActionHandlers({
+        click: {
+            'show-chapters': showChapters,
+            'show-bookmarks': showBookmarks,
+            'show-settings': showSettings,
+            'go-back': goBack,
+            'toggle-play': togglePlay,
+            'jump-current': scrollToCurrentChunk,
+            'skip-audio': skipAudioGeneration,
+            'close-bookmarks': closeBookmarksModal,
+            'close-chapters': closeChaptersModal,
+            'refresh-cache': refreshCacheStatus,
+            'clear-cache': clearAudioCache,
+            'refresh-downloads': refreshStreamActiveDownloads,
+            'close-settings': closeSettingsModal
+        },
+        change: {
+            'change-speed': changeSpeed,
+            'apply-theme': (_, target) => ThemeManager.applyTheme(target.value),
+            'update-voice-options': updateVoiceOptions,
+            'toggle-progress-mode': toggleProgressMode,
+            'toggle-time-mode': toggleTimeMode,
+            'toggle-title': toggleTitle,
+            'toggle-progress-bar': toggleProgressBar,
+            'toggle-images': toggleImages,
+            'update-sleep-timer': updateSleepTimer,
+            'toggle-save-audio': toggleSaveStreamAudio,
+            'toggle-cached-audio': toggleUseCachedAudio,
+            'progress': (_, target) => onProgressBarRelease(target.value)
+        },
+        input: {
+            'progress': (_, target) => onProgressBarDrag(target.value)
+        }
+    });
+
+    const progressBar = document.getElementById('progressBar');
+    progressBar?.addEventListener('pointerdown', () => { progressBar.dataset.seeking = 'true'; });
+    progressBar?.addEventListener('pointerup', () => { progressBar.dataset.seeking = 'false'; });
+
+    document.getElementById('settingsForm')?.addEventListener('submit', saveSettings);
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
+    bindStreamActions();
     log('Initializing with ebook:', EBOOK_PATH);
     trackFilePlayback(EBOOK_PATH).catch(err => _warn('[TRACKING] Skipped:', err.message));
 
@@ -25,7 +69,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     initSleepTimer();
 
     // Load cache status on initial page load (elements exist in DOM)
-    refreshCacheStatus().catch(() => {});
+    refreshCacheStatus().catch(error => logError('Initial cache status load failed', error));
 });
 
 window.addEventListener('beforeunload', () => {
@@ -590,18 +634,29 @@ function handleTouchEnd(e) {
 
 function showChapters() {
     const list = DOM.modalList('chapter');
+    list.replaceChildren();
     if (!state.book || !state.book.chapters) {
-        list.innerHTML = '<div class="loading">No chapters available</div>';
+        const empty = document.createElement('div');
+        empty.className = 'loading';
+        empty.textContent = 'No chapters available';
+        list.appendChild(empty);
     } else {
-        let html = '';
         state.book.chapters.forEach((ch, i) => {
             const isActive = state.currentChunk >= ch.start_chunk && state.currentChunk <= ch.end_chunk;
-            html += `<div class="chapter-item${isActive ? ' active' : ''}" onclick="jumpToChapter(${i})">
-                <div class="chapter-name">${esc(ch.name || 'Chapter ' + (i + 1))}</div>
-                <div class="chapter-info">Chunks ${ch.start_chunk + 1}–${ch.end_chunk + 1}</div>
-            </div>`;
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = `chapter-item${isActive ? ' active' : ''}`;
+            item.addEventListener('click', () => jumpToChapter(i));
+
+            const name = document.createElement('div');
+            name.className = 'chapter-name';
+            name.textContent = ch.name || `Chapter ${i + 1}`;
+            const info = document.createElement('div');
+            info.className = 'chapter-info';
+            info.textContent = `Chunks ${ch.start_chunk + 1}–${ch.end_chunk + 1}`;
+            item.append(name, info);
+            list.appendChild(item);
         });
-        list.innerHTML = html;
     }
     showModal('chapters');
 }
@@ -616,10 +671,13 @@ function jumpToChapter(index) {
 
 function showBookmarks() {
     const list = DOM.modalList('bookmark');
+    list.replaceChildren();
     if (!state.progress || !state.progress.bookmark_indices || state.progress.bookmark_indices.length === 0) {
-        list.innerHTML = '<div class="loading">No bookmarks yet</div>';
+        const empty = document.createElement('div');
+        empty.className = 'loading';
+        empty.textContent = 'No bookmarks yet';
+        list.appendChild(empty);
     } else {
-        let html = '';
         state.progress.bookmark_indices.forEach(idx => {
             // Prefer the text preview stored with the bookmark, fall back to chunk text
             const bookmarkDict = state.progress?.bookmarks;
@@ -632,12 +690,23 @@ function showBookmarks() {
                 text = chunk?.text || '';
             }
             text = text.trim().substring(0, 120) || `Chunk #${idx + 1}`;
-            html += `<div class="chapter-item" onclick="jumpToChunk(${idx}); closeBookmarksModal();">
-                <div class="chapter-name">Bookmark #${idx + 1}</div>
-                <div class="chapter-info">${esc(text)}...</div>
-            </div>`;
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'chapter-item';
+            item.addEventListener('click', () => {
+                jumpToChunk(idx);
+                closeBookmarksModal();
+            });
+
+            const name = document.createElement('div');
+            name.className = 'chapter-name';
+            name.textContent = `Bookmark #${idx + 1}`;
+            const info = document.createElement('div');
+            info.className = 'chapter-info';
+            info.textContent = `${text}...`;
+            item.append(name, info);
+            list.appendChild(item);
         });
-        list.innerHTML = html;
     }
     showModal('bookmarks');
 }
@@ -646,7 +715,7 @@ function showSettings() {
     showModal('settings');
 
     // Refresh cache status in background so it's ready when user scrolls down
-    refreshCacheStatus().catch(() => {});
+    refreshCacheStatus().catch(error => logError('Cache status refresh failed', error));
 
     const modelSelect = document.getElementById('modelSelect');
     const voiceSelect = document.getElementById('voiceSelect');

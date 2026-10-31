@@ -171,7 +171,7 @@ function openFileSettingsPanel(file) {
 
     panel.innerHTML = `
         <div class="modal-content" style="max-width: 800px; width: 95%; max-height: 90vh; overflow-y: auto; margin: auto;">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--border-color);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--border);">
                 <div style="min-width: 0; /* allow title to shrink below content width */">
                     <h2 style="margin: 0 0 5px 0; font-size: 24px; overflow-wrap: break-word;">${isEbook ? '\uD83C\uDFB5' : '\uD83D\uDCC1'} ${esc(bookTitle)}</h2>
                     <p style="margin: 0; color: var(--text-secondary); font-size: 14px;">${file.is_directory ? 'Folder' : 'File'} \u00B7 ${file.is_directory ? '' : formatBytes(file.size)}</p>
@@ -390,17 +390,17 @@ function showGenerateCacheModal(ebookPath) {
             <p style="margin-bottom: 15px; color: var(--text-secondary); word-break: break-all;">${esc(ebookPath)}</p>
 
             <label for="genCacheModel">Model:</label>
-            <select id="genCacheModel" required onchange="updateGenCacheVoices()" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
+            <select id="genCacheModel" required onchange="updateGenCacheVoices()" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
                 <option value="">Loading...</option>
             </select>
 
             <label for="genCacheVoice">Voice:</label>
-            <select id="genCacheVoice" required style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
+            <select id="genCacheVoice" required style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
                 <option value="">Select model first</option>
             </select>
 
             <label for="genCacheInstructions">Instructions (optional):</label>
-            <textarea id="genCacheInstructions" rows="3" placeholder="e.g., Speak in a cheerful tone." style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; font-size: inherit; resize: vertical;"></textarea>
+            <textarea id="genCacheInstructions" rows="3" placeholder="e.g., Speak in a cheerful tone." style="width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: inherit; resize: vertical;"></textarea>
 
             <div class="modal-buttons">
                 <button type="button" onclick="handleCacheGenerate('${escAttr(ebookPath)}')" class="btn btn-primary">\uD83C\uDFB5 Generate</button>
@@ -947,7 +947,7 @@ function showDuplicatePopupMenu(file, dupCheck) {
         });
 
         menu.innerHTML = `
-            <div style="max-width: 520px; width: 95%; margin: auto; padding: 24px; background: var(--bg-primary); border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
+            <div style="max-width: 520px; width: 95%; margin: auto; padding: 24px; background: var(--bg-primary); border-radius: 12px; border: 1px solid var(--border); box-shadow: 0 20px 60px rgba(0,0,0,0.5);">
                 <h3 style="margin: 0 0 16px 0; font-size: 18px;">📚 Uploading: ${esc(file.name)}</h3>
                 <p style="margin: 0 0 16px; color: var(--text-secondary); font-size: 14px;">Found existing file(s) with the same name:</p>
                 <div id="duplicateRows">${rowsHtml}</div>
@@ -1142,7 +1142,7 @@ function showDownloadFormatModal(ebookPath, model, voice) {
             
             <!-- OPUS -->
             <div class="format-option" onclick="startFormatConversion('opus')"
-                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>OPUS (.opus)</strong><br>
                     <span style="font-size:12px;color:var(--text-secondary)">Lossless concat • Smallest size</span>
@@ -1151,7 +1151,7 @@ function showDownloadFormatModal(ebookPath, model, voice) {
             
             <!-- M4B -->  
             <div class="format-option" onclick="startFormatConversion('m4b')"
-                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>M4B with Chapters (.m4b)</strong><br>
                     <span style="font-size:12px;color:var(--text-secondary)">AAC re-encode • Chapter metadata embedded</span>
@@ -1160,7 +1160,7 @@ function showDownloadFormatModal(ebookPath, model, voice) {
             
             <!-- MP3 -->
             <div class="format-option" onclick="startFormatConversion('mp3')"
-                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>MPEG-3 (.mp3)</strong><br>  
                     <span style="font-size:12px;color:var(--text-secondary)">Re-encoded mono • Universal compatibility</span>
@@ -1239,7 +1239,7 @@ function showDownloadProgressOverlay(formatType) {
                 </div>
             </div>
             <!-- Inline spinner (no CSS dependency) -->
-            <div style="width:48px;height:48px;border:4px solid var(--border-color); border-top-color:#ff950a; border-radius:50%; animation:_fm_spin 0.8s linear infinite; margin:0 auto 16px;"></div>
+            <div style="width:48px;height:48px;border:4px solid var(--border); border-top-color:#ff950a; border-radius:50%; animation:_fm_spin 0.8s linear infinite; margin:0 auto 16px;"></div>
             <style>@keyframes _fm_spin{to{transform:rotate(360deg)}}</style>
             <div id="_fm_progressMessage" style="font-size:14px;color:var(--text-primary);">Starting conversion...</div>
         </div>

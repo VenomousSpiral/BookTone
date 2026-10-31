@@ -19,7 +19,7 @@ function showFormatSelectionModal(model, voice) {
             
             <!-- OPUS -->
             <div class="format-option" onclick="selectFormat('${escAttr(model)}','${escAttr(voice)}','opus')" 
-                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>OPUS (.opus)</strong><br>
                     <span style="font-size:12px;color:var(--text-secondary)">Lossless concat • Smallest size</span>
@@ -28,7 +28,7 @@ function showFormatSelectionModal(model, voice) {
             
             <!-- M4B -->  
             <div class="format-option" onclick="selectFormat('${escAttr(model)}','${escAttr(voice)}','m4b')"
-                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>M4B with Chapters (.m4b)</strong><br>
                     <span style="font-size:12px;color:var(--text-secondary)">AAC re-encode • Chapter metadata embedded</span>
@@ -37,7 +37,7 @@ function showFormatSelectionModal(model, voice) {
             
             <!-- MP3 -->
             <div class="format-option" onclick="selectFormat('${escAttr(model)}','${escAttr(voice)}','mp3')"
-                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border-color);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
+                 style="padding:14px 16px;margin-bottom:8px;border:2px solid var(--border);border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:12px;">
                 <div>
                     <strong>MPEG-3 (.mp3)</strong><br>  
                     <span style="font-size:12px;color:var(--text-secondary)">Re-encoded mono • Universal compatibility</span>
@@ -259,7 +259,7 @@ function renderAudiobookPanel(data) {
     let html = '';
 
     if (caches.length > 1) {
-        html += '<select id="profileSelector" onchange="switchProfile(this.value)" style="width:100%;padding:6px;margin-bottom:8px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border-color);border-radius:4px;">';
+        html += '<select id="profileSelector" onchange="switchProfile(this.value)" style="width:100%;padding:6px;margin-bottom:8px;font-size:12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;">';
         caches.forEach(c => {
             const statusIcon = c.status === 'completed' ? '🟢' : c.status === 'in_progress' ? '⏳' : c.status === 'paused' ? '⏸️' : '❌';
             html += `<option value="${esc(c.model)}_${esc(c.voice)}">${esc(c.model)} / ${esc(c.voice)} (${c.completed_chunks}/${c.total_chunks}) ${statusIcon}</option>`;
@@ -297,7 +297,7 @@ function renderAudiobookPanel(data) {
     html += '</div>';
 
     if (caches.length > 1) {
-        html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border-color);">';
+        html += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">';
         caches.forEach(c => {
             const icon = c.status === 'completed' ? '✅' : c.status === 'in_progress' ? '⏳' : c.status === 'paused' ? '⏸️' : '❌';
             html += `<div style="font-size:12px;padding:3px 0;">${icon} ${esc(c.model)}/${esc(c.voice)} · ${c.completed_chunks}/${c.total_chunks} · ${c.size_mb} MB</div>`;

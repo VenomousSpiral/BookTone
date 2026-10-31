@@ -20,18 +20,18 @@
         <div id="filesSection" class="tab-content active">
             <div class="toolbar">
                 <input type="file" id="fileUpload" accept=".epub,.txt,.html,.pdf" style="display: none">
-                <button onclick="document.getElementById('fileUpload').click()" class="btn btn-primary">
+                <button data-action="upload-file" class="btn btn-primary">
                     📤 Upload Ebook
                 </button>
-                <button onclick="createDirectory()" class="btn">📁 New Folder</button>
-                <button onclick="showCreateTextFileModal()" class="btn">📝 New Text File</button>
+                <button data-action="create-directory" class="btn">📁 New Folder</button>
+                <button data-action="new-text-file" class="btn">📝 New Text File</button>
             </div>
             
             <div class="breadcrumb" id="breadcrumb"></div>
             
             <div class="search-sort-controls">
-                <input type="text" id="fileSearch" class="search-input" placeholder="🔍 Search files..." oninput="filterFiles()">
-                <select id="fileSort" class="sort-select" onchange="sortFiles()">
+                <input type="text" id="fileSearch" class="search-input" placeholder="🔍 Search files..." data-action="filter-files">
+                <select id="fileSort" class="sort-select" data-action="sort-files">
                     <option value="recent">Sort: Recently Played</option>
                     <option value="name">Sort: A-Z</option>
                     <option value="modified">Sort: Recently Modified</option>
@@ -47,8 +47,8 @@
         <!-- Models Tab -->
         <div id="modelsSection" class="tab-content">
             <div class="toolbar">
-                <button onclick="showAddModelDialog()" class="btn btn-primary">➕ Add Model</button>
-                <button onclick="refreshModels()" class="btn">🔄 Refresh</button>
+                <button data-action="add-model" class="btn btn-primary">➕ Add Model</button>
+                <button data-action="refresh-models" class="btn">🔄 Refresh</button>
             </div>
             
             <div class="models-list" id="modelsList">
@@ -58,9 +58,9 @@
     </div>
 
     <!-- Modal for Generate Audiobook -->
-    <div id="generateModal" class="modal">
+    <div id="generateModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="generateTitle">
         <div class="modal-content">
-            <h2>Generate Audiobook</h2>
+            <h2 id="generateTitle">Generate Audiobook</h2>
             <p style="color: var(--text-secondary); margin-bottom: 15px;" id="generateFilePathDisplay"></p>
             <form id="generateForm">
                 <input type="hidden" id="generateFilePath">
@@ -76,16 +76,16 @@
                 
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">Generate & Open Stream</button>
-                    <button type="button" onclick="closeGenerateModal()" class="btn">Cancel</button>
+                    <button type="button" data-action="close-generate" class="btn">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
 
     <!-- Modal for Add Model -->
-    <div id="addModelModal" class="modal">
+    <div id="addModelModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="addModelTitle">
         <div class="modal-content">
-            <h2>Add OpenAI Model</h2>
+            <h2 id="addModelTitle">Add OpenAI Model</h2>
             <form id="addModelForm">
                 <label for="modelName">Display Name:</label>
                 <input type="text" id="modelName" required placeholder="e.g., My Local TTS Server">
@@ -104,16 +104,16 @@
                 
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">Add Model</button>
-                    <button type="button" onclick="closeAddModelModal()" class="btn">Cancel</button>
+                    <button type="button" data-action="close-add-model" class="btn">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
 
     <!-- Modal for Edit Model -->
-    <div id="editModelModal" class="modal">
+    <div id="editModelModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="editModelTitle">
         <div class="modal-content">
-            <h2>Edit OpenAI Model</h2>
+            <h2 id="editModelTitle">Edit OpenAI Model</h2>
             <form id="editModelForm">
                 <label for="editModelName">Display Name:</label>
                 <input type="text" id="editModelName" required placeholder="e.g., My Local TTS Server">
@@ -132,7 +132,7 @@
 
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">Save Changes</button>
-                    <button type="button" onclick="closeEditModelModal()" class="btn">Cancel</button>
+                    <button type="button" data-action="close-edit-model" class="btn">Cancel</button>
                 </div>
             </form>
         </div>
@@ -142,19 +142,19 @@
     <div id="moveMenu" class="modal"></div>
 
     <!-- Modal for Create Text File -->
-    <div id="createTextFileModal" class="modal">
+    <div id="createTextFileModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="createTextFileTitle">
         <div class="modal-content" style="max-width: 600px;">
-            <h2>📝 New Text File</h2>
+            <h2 id="createTextFileTitle">📝 New Text File</h2>
             <form id="createTextFileForm">
                 <label for="newTextFileName">Filename (e.g., my-notes.txt):</label>
-                <input type="text" id="newTextFileName" required placeholder="filename.txt" style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                <input type="text" id="newTextFileName" required placeholder="filename.txt" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px;">
 
                 <label for="newTextFileContent">Content:</label>
-                <textarea id="newTextFileContent" rows="15" placeholder="Paste or type your text here..." style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; font-size: inherit; resize: vertical;"></textarea>
+                <textarea id="newTextFileContent" rows="15" placeholder="Paste or type your text here..." style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: inherit; resize: vertical;"></textarea>
 
                 <div class="modal-buttons">
                     <button type="submit" class="btn btn-primary">Create File</button>
-                    <button type="button" onclick="closeCreateTextFileModal()" class="btn">Cancel</button>
+                    <button type="button" data-action="close-create-text" class="btn">Cancel</button>
                 </div>
             </form>
         </div>

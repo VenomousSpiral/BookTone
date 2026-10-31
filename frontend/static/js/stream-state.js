@@ -60,6 +60,7 @@ const state = {
         resetFunction: null
     }
 };
+let modalTrigger = null;
 
 // Constants
 const CACHE = { SIZE: 10, CONCURRENCY: 3, MAX_SIZE: 30 };
@@ -135,12 +136,40 @@ const showToast = (msg) => {
 // ========== MODAL MANAGEMENT ==========
 const showModal = (type, populateFn) => {
     const modal = DOM.modal(type);
+    if (!modal) return;
+    modalTrigger = document.activeElement;
     if (populateFn) populateFn();
     modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    modal.querySelector('button, input, select, textarea')?.focus();
 };
 
-const closeModal = (type) => DOM.modal(type).style.display = 'none';
+const closeModal = (type) => {
+    const modal = DOM.modal(type);
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    modalTrigger?.focus?.();
+    modalTrigger = null;
+};
 
 window.onclick = (e) => {
-    if (e.target.classList.contains('modal')) e.target.style.display = 'none';
+    if (e.target.classList.contains('modal')) closeModal(e.target.id.replace(/Modal$/, ''));
 };
+
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.modal').forEach((modal) => {
+        if (modal.style.display === 'flex' || modal.classList.contains('active')) {
+            modal.style.display = 'none';
+            modal.classList.remove('active');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+    });
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.modal').forEach((modal) => {
+        modal.setAttribute('aria-hidden', 'true');
+    });
+});

@@ -3,13 +3,11 @@ from fastapi.responses import FileResponse
 from typing import Dict, List, Optional
 from pathlib import Path
 from pydantic import BaseModel
-import threading
-import time
 import logging
 from app.core.config import settings
 from app.services.file_manager import FileManager
 from app.services import stream_service
-from app.services.ebook_parser import EbookParser
+from app.services.preparse_service import start_preparse
 
 router = APIRouter()
 file_manager = FileManager()
@@ -54,22 +52,7 @@ async def upload_file(
         _logger = logging.getLogger("ebook_parser")
         _logger.debug("[UPLOAD] File saved: file=%s", file_path)
 
-        # Background pre-parse: build disk cache so streaming is instant
-        def _pre_parse():
-            _logger.debug("[UPLOAD] Pre-parse thread STARTED: file=%s", file_path)
-            t0 = time.time()
-            try:
-                parser = EbookParser()
-                parser.parse_and_cache(file_path, with_images=False)
-                if file_path.suffix.lower() in ('.epub', '.pdf'):
-                    parser.parse_and_cache(file_path, with_images=True)
-                elapsed = time.time() - t0
-                _logger.debug("[UPLOAD] Pre-parse thread COMPLETED: file=%s took=%.2fs", file_path, elapsed)
-            except Exception as e:
-                elapsed = time.time() - t0
-                _logger.error("[UPLOAD] Pre-parse thread FAILED: file=%s took=%.2fs error=%s", file_path, elapsed, e)
-
-        threading.Thread(target=_pre_parse, daemon=True).start()
+        start_preparse(file_path)
         _logger.debug("[UPLOAD] Pre-parse thread started (non-blocking)")
 
         return {
@@ -176,23 +159,7 @@ async def upload_file_replace_cache(
             else:
                 logger.info(f"[MERGE] Replaced caches, file already overwritten: {dup_path}")
         
-        # Background pre-parse
-        def _pre_parse():
-            _logger = logging.getLogger("ebook_parser")
-            _logger.debug("[UPLOAD] Pre-parse thread STARTED: file=%s", file_path)
-            t0 = time.time()
-            try:
-                parser = EbookParser()
-                parser.parse_and_cache(file_path, with_images=False)
-                if file_path.suffix.lower() in ('.epub', '.pdf'):
-                    parser.parse_and_cache(file_path, with_images=True)
-                elapsed = time.time() - t0
-                _logger.debug("[UPLOAD] Pre-parse thread COMPLETED: file=%s took=%.2fs", file_path, elapsed)
-            except Exception as e:
-                elapsed = time.time() - t0
-                _logger.error("[UPLOAD] Pre-parse thread FAILED: file=%s took=%.2fs error=%s", file_path, elapsed, e)
-        
-        threading.Thread(target=_pre_parse, daemon=True).start()
+        start_preparse(file_path)
         
         return {
             "message": "File uploaded and caches replaced",
@@ -266,23 +233,7 @@ preserved intact.
             # The new upload gets its own fresh audiobook cache (empty),
             # while the original keeps both its ebook and cached audio intact.
 
-        # Background pre-parse
-        def _pre_parse():
-            _logger = logging.getLogger("ebook_parser")
-            _logger.debug("[UPLOAD] Pre-parse thread STARTED: file=%s", file_path)
-            t0 = time.time()
-            try:
-                parser = EbookParser()
-                parser.parse_and_cache(file_path, with_images=False)
-                if file_path.suffix.lower() in ('.epub', '.pdf'):
-                    parser.parse_and_cache(file_path, with_images=True)
-                elapsed = time.time() - t0
-                _logger.debug("[UPLOAD] Pre-parse thread COMPLETED: file=%s took=%.2fs", file_path, elapsed)
-            except Exception as e:
-                elapsed = time.time() - t0
-                _logger.error("[UPLOAD] Pre-parse thread FAILED: file=%s took=%.2fs error=%s", file_path, elapsed, e)
-        
-        threading.Thread(target=_pre_parse, daemon=True).start()
+        start_preparse(file_path)
         
         return {
             "message": "File uploaded and caches copied",
@@ -310,23 +261,7 @@ async def upload_file_ignore_cache(
         # Save file atomically
         file_path = file_manager.save_uploaded_file_atomic(file, path)
         
-        # Background pre-parse
-        def _pre_parse():
-            _logger = logging.getLogger("ebook_parser")
-            _logger.debug("[UPLOAD] Pre-parse thread STARTED: file=%s", file_path)
-            t0 = time.time()
-            try:
-                parser = EbookParser()
-                parser.parse_and_cache(file_path, with_images=False)
-                if file_path.suffix.lower() in ('.epub', '.pdf'):
-                    parser.parse_and_cache(file_path, with_images=True)
-                elapsed = time.time() - t0
-                _logger.debug("[UPLOAD] Pre-parse thread COMPLETED: file=%s took=%.2fs", file_path, elapsed)
-            except Exception as e:
-                elapsed = time.time() - t0
-                _logger.error("[UPLOAD] Pre-parse thread FAILED: file=%s took=%.2fs error=%s", file_path, elapsed, e)
-        
-        threading.Thread(target=_pre_parse, daemon=True).start()
+        start_preparse(file_path)
         
         return {
             "message": "File uploaded (caches ignored)",

@@ -9,9 +9,8 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict
-import sqlite3 as _sqlite3
 
-from app.services.database import DB_PATH
+from app.services.database import database_path, get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +79,7 @@ class SettingsService:
 
     def __init__(self, settings_file: Path = None, db_path: Path = None):
         if db_path is None:
-            self.db_path = DB_PATH
+            self.db_path = database_path()
             if settings_file is not None:
                 sfile = Path(settings_file)
                 self.db_path = sfile.parent / (sfile.stem + ".db")
@@ -92,9 +91,7 @@ class SettingsService:
         # Ensure parent dir exists.
         _db = Path(str(self.db_path))
         _db.parent.mkdir(parents=True, exist_ok=True)
-        conn = _sqlite3.connect(str(_db))
-        conn.row_factory = _sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
+        conn = get_connection(_db)
         # Auto-create settings_kv table if missing.
         try:
             conn.execute(
