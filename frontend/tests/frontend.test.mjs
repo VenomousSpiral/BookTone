@@ -42,6 +42,61 @@ test('formats time with hours only when needed', async () => {
     assert.equal(vmCall(context, 'formatTime(3661)'), '1:01:01');
 });
 
+test('Escape closes stream modals and restores focus to the opener', async () => {
+    const { context, document } = createContext();
+    const opener = document.register('settingsButton', new FakeElement('button'));
+    const modal = document.register('settingsModal', new FakeElement('div'));
+    const firstControl = new FakeElement('button');
+    firstControl.ownerDocument = document;
+    modal.querySelector = () => firstControl;
+    modal.classList.add('modal');
+
+    await loadScript(context, 'frontend/static/js/stream-state.js');
+
+    opener.focus();
+    vmCall(context, `showModal('settings')`);
+    assert.equal(modal.style.display, 'flex');
+    assert.equal(modal.getAttribute('aria-hidden'), 'false');
+    assert.equal(document.activeElement, firstControl);
+
+    document.dispatchEvent({ type: 'keydown', key: 'Escape' });
+
+    assert.equal(modal.style.display, 'none');
+    assert.equal(modal.getAttribute('aria-hidden'), 'true');
+    assert.equal(document.activeElement, opener);
+});
+
+test('chunk controls expose keyboard activation and bookmark state', async () => {
+    const { context, document } = createContext();
+    document.register('loadingOverlay');
+    await loadScript(context, 'frontend/static/js/stream-state.js');
+    await loadScript(context, 'frontend/static/js/stream.js');
+    await loadScript(context, 'frontend/static/js/stream-text.js');
+
+    vmCall(context, `state.progress = { bookmark_indices: [3] };
+        globalThis.jumpedTo = [];
+        globalThis.loadAndJumpToChunk = index => jumpedTo.push(index)`);
+
+    const chunk = vmCall(context, 'createChunkElement(3)');
+    assert.equal(chunk.getAttribute('role'), 'button');
+    assert.equal(chunk.getAttribute('tabindex'), '0');
+    assert.equal(chunk.getAttribute('aria-label'), 'Jump to text chunk 4');
+    assert.equal(chunk.classList.contains('bookmarked'), true);
+
+    chunk.dispatchEvent({
+        type: 'keydown',
+        key: 'Enter',
+        preventDefault() {}
+    });
+    chunk.dispatchEvent({
+        type: 'keydown',
+        key: ' ',
+        preventDefault() {}
+    });
+
+    assert.deepEqual(Array.from(context.jumpedTo), [3, 3]);
+});
+
 test('renders breadcrumbs with safe text nodes and navigation callbacks', async () => {
     const { context, document } = createContext();
     document.register('filesTab', new FakeElement('button'));

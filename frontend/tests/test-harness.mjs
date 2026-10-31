@@ -77,6 +77,7 @@ export class FakeElement {
 
     focus() {
         this.focused = true;
+        if (this.ownerDocument) this.ownerDocument.activeElement = this;
     }
 }
 
@@ -86,6 +87,7 @@ export class FakeDocument {
         this.listeners = new Map();
         this.body = new FakeElement('body');
         this.body.ownerDocument = this;
+        this.activeElement = this.body;
     }
 
     register(id, element = new FakeElement()) {
@@ -125,13 +127,15 @@ export class FakeDocument {
     }
 
     querySelectorAll() {
-        return [];
+        return [...this.elements.values()];
     }
 }
 
 export function createContext() {
     const document = new FakeDocument();
-    const window = {};
+    const window = {
+        addEventListener() {}
+    };
     const context = vm.createContext({
         document,
         window,

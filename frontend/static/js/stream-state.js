@@ -161,9 +161,7 @@ document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     document.querySelectorAll('.modal').forEach((modal) => {
         if (modal.style.display === 'flex' || modal.classList.contains('active')) {
-            modal.style.display = 'none';
-            modal.classList.remove('active');
-            modal.setAttribute('aria-hidden', 'true');
+            closeModal(modal.id.replace(/Modal$/, ''));
         }
     });
 });
