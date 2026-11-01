@@ -206,14 +206,10 @@ function pollProgress(jobId) {
 
 /** Download the completed file by job ID */
 async function downloadByJobId(jobId) {
-    const url = `${API_BASE}/stream/download/${jobId}`;  
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = '';  // Let server determine filename from Content-Disposition header
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    // Let the server's Content-Disposition header trigger the browser download.
+    // A synthetic anchor with an empty `download` attribute is unreliable after
+    // the asynchronous conversion poll completes.
+    window.location.href = `${API_BASE}/stream/download/${encodeURIComponent(jobId)}`;
 }
 
 function hideProgressOverlay() {
@@ -446,20 +442,28 @@ function startStreamDownloadsPolling(jobId) {
     
     const poll = async () => {
         try {
-            // Check if job is still active
-            const res = await fetch(`${API_BASE}/stream/active-downloads`);
+            // Poll the specific job so completion triggers the actual browser
+            // download. The active-downloads endpoint only lists active jobs.
+            const res = await fetch(`${API_BASE}/stream/download-progress/${jobId}`);
             if (!res.ok) throw new Error('Failed to check downloads');
             
-            const data = await res.json();
-            const relevantJob = (data.jobs || []).find(j => j.job_id === jobId && ['pending', 'converting'].includes(j.status));
+            const relevantJob = await res.json();
             
-            if (!relevantJob) {
-                // Job is done or failed — stop polling
+            if (relevantJob.status === 'ready') {
                 clearInterval(streamPollInterval);
                 streamPollInterval = null;
+                showToast(`Download ready! Starting download as .${relevantJob.format_type}`);
+                downloadByJobId(relevantJob.job_id);
                 return;
             }
-            
+
+            if (relevantJob.status === 'failed') {
+                clearInterval(streamPollInterval);
+                streamPollInterval = null;
+                showToast(`Conversion failed: ${relevantJob.error_message || 'unknown error'}`, true);
+                return;
+            }
+
             refreshStreamActiveDownloads();
         } catch (error) {
             console.error('[STREAM DOWNLOADS] Poll error:', error);

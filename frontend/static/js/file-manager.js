@@ -1208,10 +1208,11 @@ async function startFormatConversion(formatType) {
             // Backend may not have registered the job yet (daemon thread starts async).
             // Retry once after a short delay to catch it.
             setTimeout(() => { loadAndRenderDownloads(params.ebookPath); }, 800);
-        } else {
-            // Panel closed — poll silently for progress updates
-            pollDownloadProgressSilent(job.job_id, params.ebookPath);
         }
+
+        // The active-downloads endpoint only displays progress; poll this job
+        // so completion triggers the actual browser download.
+        pollDownloadProgress(job.job_id, params.ebookPath);
     } catch (error) {
         showToast('Error: ' + error.message, true);
         console.error('[DOWNLOAD] Error starting download:', error);
@@ -1255,6 +1256,11 @@ function updateDownloadProgressUI(job) {
     const barInner = document.getElementById('_fm_progressBarInner');  
     const msgEl = document.getElementById('_fm_progressMessage');
     const barOuter = document.getElementById('_fm_progressBarOuter');
+
+    // The file-settings flow uses the inline active-downloads panel rather
+    // than the optional blocking overlay. Progress polling must still reach
+    // the ready/failed handling when that overlay is absent.
+    if (!pctEl || !barInner || !msgEl || !barOuter) return;
     
     if (job.status === 'converting' && job.progress_pct > 0) {
         // Show progress bar for active conversions
@@ -1381,14 +1387,10 @@ function pollDownloadProgressSilent(jobId, ebookPath) {
 
 /** Download the completed file by job ID */
 async function downloadByJobId(jobId) {
-    const url = `${API_BASE}/stream/download/${jobId}`;  
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = '';  // Let server determine filename from Content-Disposition header
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    // Let the server's Content-Disposition header trigger the browser download.
+    // A synthetic anchor with an empty `download` attribute is unreliable after
+    // the asynchronous conversion poll completes.
+    window.location.href = `${API_BASE}/stream/download/${encodeURIComponent(jobId)}`;
 }
 
 // ========== GLOBAL EXPORTS ==========
