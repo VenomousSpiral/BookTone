@@ -325,15 +325,20 @@
         
         .modal {
             touch-action: none;
+            height: 100dvh;
+            min-height: -webkit-fill-available;
+            padding: 10px 0;
+            padding: max(10px, env(safe-area-inset-top)) 0 max(10px, env(safe-area-inset-bottom));
         }
         
         .modal-content {
             max-width: 95%;
-            max-height: 90vh;
+            max-height: calc(100vh - 20px);
+            max-height: calc(100dvh - max(20px, env(safe-area-inset-top) + env(safe-area-inset-bottom) + 20px));
             overflow-y: auto;
             -webkit-overflow-scrolling: touch;
         }
-        
+
         /* Mobile-specific improvements */
         @media (max-width: 768px) {
             .stream-container {

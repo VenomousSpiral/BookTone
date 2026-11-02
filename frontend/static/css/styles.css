@@ -158,9 +158,11 @@ nav {
     font-size: 14px;
 }
 
-.btn:hover {
-    background-color: var(--accent);
-    border-color: var(--accent);
+@media (hover: hover) and (pointer: fine) {
+    .btn:hover {
+        background-color: var(--accent);
+        border-color: var(--accent);
+    }
 }
 
 .btn-primary {

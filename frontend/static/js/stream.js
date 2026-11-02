@@ -1,6 +1,12 @@
 // stream.js — Main glue: init, modals, settings, sleep timer, touch, navigation, bookmarks
 // Depends on: stream-state.js, stream-audio.js, stream-text.js, stream-cache.js
 
+function jumpToCurrentFromButton(event, target) {
+    // iOS keeps the tapped button focused, which leaves its touch hover style visible.
+    target.blur();
+    return scrollToCurrentChunk();
+}
+
 // ========== INITIALIZATION ==========
 
 function bindStreamActions() {
@@ -11,7 +17,7 @@ function bindStreamActions() {
             'show-settings': showSettings,
             'go-back': goBack,
             'toggle-play': togglePlay,
-            'jump-current': scrollToCurrentChunk,
+            'jump-current': jumpToCurrentFromButton,
             'skip-audio': skipAudioGeneration,
             'close-bookmarks': closeBookmarksModal,
             'close-chapters': closeChaptersModal,
