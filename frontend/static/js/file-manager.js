@@ -134,10 +134,10 @@ function createFileItem(file) {
     const fileActions = document.createElement('div');
     fileActions.className = 'file-actions';
 
-    if (!file.is_directory) {
+    if (!file.is_directory && /\.(epub|txt|pdf)$/i.test(file.name)) {
         const genBtn = createButton('btn-small', '\uD83C\uDFB5', (e) => {
             e.stopPropagation();
-            showGenerateModal(file.path);
+            showGenerateCacheModal(file.path);
         });
         fileActions.appendChild(genBtn);
     }
@@ -370,7 +370,31 @@ function loadAndRenderAudiobookStatus(ebookPath) {
 
 // ========== CACHE-FIRST GENERATION MODAL (consolidated from 2 duplicates) ==========
 
-function showGenerateCacheModal(ebookPath) {
+// ========== GENERATE AUDIOBOOK (same as book settings) ==========
+// ========== GENERATE AUDIOBOOK POPUP MODAL ==========
+async function showGenerateCacheModal(ebookPath) {
+    // Load models and settings to pre-select preferred model/voice
+    let preferredModel = null;
+    let preferredVoice = null;
+    let allModels = {};
+
+    try {
+        const [settingsRes, modelsRes] = await Promise.all([
+            fetch(`${API_BASE}/stream/settings`),
+            fetch(`${API_BASE}/openai/models`)
+        ]);
+        if (modelsRes.ok) allModels = await modelsRes.json();
+        if (settingsRes.ok) {
+            const settings = await settingsRes.json();
+            preferredModel = settings.preferred_model || null;
+            preferredVoice = settings.preferred_voice || null;
+        }
+    } catch (e) {
+        showToast('Error loading data: ' + e.message);
+        return;
+    }
+
+    // Create or reuse modal element
     let modal = document.getElementById('generateCacheModal');
     if (!modal) {
         modal = document.createElement('div');
@@ -380,9 +404,27 @@ function showGenerateCacheModal(ebookPath) {
         document.body.appendChild(modal);
     }
 
-    modal.style.display = 'flex';
-    modal.classList.add('active');
-    modal.style.zIndex = '10003';
+    // Build model options, pre-selecting preferred if available
+    let modelOptionsHtml = '';
+    for (const [name, model] of Object.entries(allModels)) {
+        const selected = (preferredModel && name === preferredModel) ? 'selected' : '';
+        modelOptionsHtml += `<option value="${esc(name)}" ${selected}>${esc(model.name)}</option>`;
+    }
+
+    // Build voice options based on first/selected model
+    let defaultVoices = [];
+    if (preferredModel && allModels[preferredModel]) {
+        defaultVoices = allModels[preferredModel].voices || [];
+    } else if (Object.keys(allModels).length > 0) {
+        const firstKey = Object.keys(allModels)[0];
+        defaultVoices = allModels[firstKey].voices || [];
+    }
+
+    let voiceOptionsHtml = '';
+    for (const v of defaultVoices) {
+        const selected = (preferredVoice === v) ? 'selected' : '';
+        voiceOptionsHtml += `<option value="${esc(v)}" ${selected}>${esc(v)}</option>`;
+    }
 
     modal.innerHTML = `
         <div class="modal-content" style="max-width: 500px; overflow-x: hidden; box-sizing: border-box;">
@@ -391,12 +433,12 @@ function showGenerateCacheModal(ebookPath) {
 
             <label for="genCacheModel">Model:</label>
             <select id="genCacheModel" required onchange="updateGenCacheVoices()" style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
-                <option value="">Loading...</option>
+                ${modelOptionsHtml}
             </select>
 
             <label for="genCacheVoice">Voice:</label>
             <select id="genCacheVoice" required style="width: 100%; padding: 8px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary);">
-                <option value="">Select model first</option>
+                ${voiceOptionsHtml}
             </select>
 
             <label for="genCacheInstructions">Instructions (optional):</label>
@@ -409,38 +451,26 @@ function showGenerateCacheModal(ebookPath) {
         </div>
     `;
 
-    loadGenCacheModels();
-}
-
-async function loadGenCacheModels() {
-    try {
-        const res = await fetch(`${API_BASE}/openai/models`);
-        const models = await res.json();
-        const select = document.getElementById('genCacheModel');
-        select.innerHTML = '';
-        for (const [name, model] of Object.entries(models)) {
-            select.appendChild(createOption(name, model.name));
-        }
-        if (select.options.length > 0) updateGenCacheVoices();
-    } catch (e) {
-        document.getElementById('genCacheModel').innerHTML = '<option value="">Error loading models</option>';
-    }
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+    modal.style.zIndex = '10003';
 }
 
 function updateGenCacheVoices() {
-    const model = document.getElementById('genCacheModel').value;
+    const modelSelect = document.getElementById('genCacheModel');
     const voiceSelect = document.getElementById('genCacheVoice');
+    const selectedModel = modelSelect.value;
     voiceSelect.innerHTML = '';
 
-    if (!model) {
-        voiceSelect.innerHTML = '<option value="">Select model first</option>';
+    if (!selectedModel) {
+        voiceSelect.innerHTML = '<option value="">No models loaded</option>';
         return;
     }
 
-    fetch(`${API_BASE}/openai/models/${model}/voices`)
+    fetch(`${API_BASE}/openai/models/${selectedModel}/voices`)
         .then(r => r.json())
         .then(voices => {
-            voices.forEach(voice => voiceSelect.appendChild(createOption(voice, voice)));
+            voices.forEach(v => voiceSelect.appendChild(createOption(v, v)));
         })
         .catch(() => {
             voiceSelect.innerHTML = '<option value="">Error loading voices</option>';
@@ -456,9 +486,11 @@ function closeGenerateCacheModal() {
 }
 
 async function handleCacheGenerate(ebookPath) {
-    const model = document.getElementById('genCacheModel').value;
-    const voice = document.getElementById('genCacheVoice').value;
+    const modelSelect = document.getElementById('genCacheModel');
+    const voiceSelect = document.getElementById('genCacheVoice');
     const instructions = document.getElementById('genCacheInstructions').value;
+    const model = modelSelect.value;
+    const voice = voiceSelect.value;
 
     if (!model || !voice) {
         showToast('Please select model and voice');
@@ -477,11 +509,57 @@ async function handleCacheGenerate(ebookPath) {
         const data = await res.json();
         showToast(`Generation started: ${data.model}/${data.voice}`);
         closeGenerateCacheModal();
-        loadAndRenderAudiobookStatus(ebookPath);
     } catch (e) {
-        showToast('Error: ' + e.message);
+        showToast('Error starting generation: ' + e.message);
     }
 }
+
+// Start generation and navigate to stream page (same as book settings)
+async function startGenerationFromFilePath(filePath) {
+    // Track as recently read before navigating away
+    try { await trackAsRecentlyRead(filePath); } catch(err) {}
+
+    let preferredModel = null;
+    let preferredVoice = null;
+
+    try {
+        const res = await fetch(`${API_BASE}/stream/settings`);
+        if (!res.ok) throw new Error('Failed to load settings');
+        const settings = await res.json();
+        preferredModel = settings.preferred_model || null;
+        preferredVoice = settings.preferred_voice || null;
+    } catch (e) {
+        showToast('Error loading settings: ' + e.message);
+        return;
+    }
+
+    if (!preferredModel || !preferredVoice) {
+        showToast('Please select a model and voice in the streaming settings first');
+        return;
+    }
+
+    // Start generation using preferred_model/preferred_voice (same as book settings)
+    try {
+        const res = await fetch(`${API_BASE}/stream/generate-cache`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ebook_path: filePath, model: preferredModel, voice: preferredVoice })
+        });
+
+        if (!res.ok) throw new Error('Failed to start generation');
+
+        const data = await res.json();
+        showToast(`Generation started: ${data.model}/${data.voice}`);
+    } catch (e) {
+        showToast('Error starting generation: ' + e.message);
+        return;
+    }
+
+    // Navigate to stream page after successful start (fixed URL parameter)
+    window.location.href = `/stream?ebook=${encodeURIComponent(filePath)}`;
+}
+
+
 
 // ========== CACHE MANAGEMENT HANDLERS ==========
 
@@ -1402,9 +1480,8 @@ window.openStreamMode = openStreamMode;
 window.showCreateTextFileModal = showCreateTextFileModal;
 window.closeCreateTextFileModal = closeCreateTextFileModal;
 window.showGenerateCacheModal = showGenerateCacheModal;
-window.closeGenerateCacheModal = closeGenerateCacheModal;
-window.loadGenCacheModels = loadGenCacheModels;
 window.updateGenCacheVoices = updateGenCacheVoices;
+window.closeGenerateCacheModal = closeGenerateCacheModal;
 window.handleCacheGenerate = handleCacheGenerate;
 window.handleCacheRegenerate = handleCacheRegenerate;
 window.handleCacheDelete = handleCacheDelete;
